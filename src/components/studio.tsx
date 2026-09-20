@@ -14,6 +14,16 @@ import {
   estimateOpenRouterVideoCost,
   formatSGD,
 } from "@/lib/pricing";
+import {
+  alertDone,
+  alertsEnabled,
+  askNotifPermission,
+  notifState,
+  playChime,
+  primeAudio,
+  setAlertsEnabled,
+  type NotifState,
+} from "@/lib/notify";
 import type {
   ApiError,
   AssetRefMeta,
@@ -59,6 +69,7 @@ function assetToTask(a: StoredAsset): TaskRecord {
     usage: a.usage,
     estimate: a.estimate,
     params: a.params,
+    hidden: a.hidden,
   };
   if (a.kind === "video") {
     const settings: VideoSettings = {
@@ -171,8 +182,13 @@ export default function Studio({
     "generated"
   );
   const [directorSlot, setDirectorSlot] = useState<HTMLDivElement | null>(null);
+  const [uploadsNonce, setUploadsNonce] = useState(0);
+  const [pasteNote, setPasteNote] = useState<string | null>(null);
+  const [alertsOn, setAlertsOn] = useState(false);
+  const [notifPerm, setNotifPerm] = useState<NotifState>("default");
   const mainRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
+  const alertedRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -180,6 +196,77 @@ export default function Studio({
       if (v >= 25 && v <= 78) setSplit(v);
     });
     return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      setAlertsOn(alertsEnabled());
+      setNotifPerm(notifState());
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      const dt = e.clipboardData;
+      if (!dt) return;
+      const files: File[] = [];
+      for (const item of Array.from(dt.items)) {
+        if (item.kind !== "file") continue;
+        if (
+          !item.type.startsWith("image/") &&
+          !item.type.startsWith("audio/")
+        )
+          continue;
+        const f = item.getAsFile();
+        if (f) files.push(f);
+      }
+      if (!files.length) return;
+      e.preventDefault();
+      void (async () => {
+        const d = new Date();
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+        const form = new FormData();
+        files.forEach((f, i) => {
+          const ext = (f.type.split("/")[1] || "png").replace("jpeg", "jpg");
+          const named =
+            f.name && f.name !== "image.png"
+              ? f.name
+              : `pasted-${stamp}${files.length > 1 ? `-${i + 1}` : ""}.${ext}`;
+          form.append("files", f, named);
+        });
+        if (projectId) form.append("projectId", projectId);
+        try {
+          const res = await fetch("/api/uploads", { method: "POST", body: form });
+          const data = await res.json().catch(() => null);
+          if (!res.ok)
+            throw new Error(data?.message || `Upload failed (HTTP ${res.status})`);
+          setAssetPane("uploaded");
+          setUploadsNonce((n) => n + 1);
+          setPasteNote(
+            `Pasted ${files.length} file${files.length === 1 ? "" : "s"} into the upload library — drag one into a reference zone to use it`
+          );
+          window.setTimeout(() => setPasteNote(null), 6000);
+        } catch (err) {
+          setBanner(
+            `Could not paste image: ${err instanceof Error ? err.message : String(err)}`
+          );
+        }
+      })();
+    };
+    window.addEventListener("paste", onPaste);
+    return () => window.removeEventListener("paste", onPaste);
+  }, [projectId]);
+
+  const toggleAlerts = useCallback(async () => {
+    const next = !alertsEnabled();
+    setAlertsEnabled(next);
+    setAlertsOn(next);
+    if (!next) return;
+    primeAudio();
+    playChime(true);
+    setNotifPerm(await askNotifPermission());
   }, []);
   useEffect(() => {
     try {
@@ -356,6 +443,7 @@ export default function Studio({
           const s = task.settings;
           settings = {
             model: s.model,
+            userPrompt: s.userPrompt,
             resolution: s.resolution,
             ratio: s.ratio,
             duration: s.duration,
@@ -394,6 +482,7 @@ export default function Studio({
           const s = task.settings;
           settings = {
             model: s.model,
+            userPrompt: s.userPrompt,
             size: s.size,
             n: s.n,
             negativePrompt: s.negativePrompt,
@@ -512,6 +601,23 @@ export default function Studio({
                 : undefined
             ) ?? undefined;
         updateTask(task.id, patch);
+        if (
+          (patch.status === "succeeded" || patch.status === "failed") &&
+          task.status !== patch.status &&
+          !alertedRef.current.has(task.id)
+        ) {
+          alertedRef.current.add(task.id);
+          alertDone({
+            ok: patch.status === "succeeded",
+            title:
+              patch.status === "succeeded" ? "Video ready" : "Video failed",
+            body:
+              patch.status === "succeeded"
+                ? task.prompt.slice(0, 140)
+                : patch.error?.message || "Generation failed",
+            tag: task.id,
+          });
+        }
         if (patch.videoUrl && task.status !== "succeeded") {
           if (task.assetId) {
             void fetch(`/api/assets/${task.assetId}/complete`, {
@@ -586,7 +692,8 @@ export default function Studio({
         params: {
           resolution: payload.resolution,
           ratio: payload.ratio,
-          duration: payload.duration,
+          duration:
+            payload.duration === -1 ? "smart" : payload.duration,
           audio: payload.audio,
           refs: payload.media.length,
           rewrite: payload.promptTab === "rewritten",
@@ -703,7 +810,7 @@ export default function Studio({
       }
       setTasks((list) => [...created, ...list]);
 
-      const runOne = async (rec: TaskRecord, i: number) => {
+      const runOne = async (rec: TaskRecord, i: number): Promise<boolean> => {
         try {
           const res = await fetch(endpoint, {
             method: "POST",
@@ -728,7 +835,7 @@ export default function Studio({
               status: "failed",
               error: apiError(data, res.status),
             });
-            return;
+            return false;
           }
           if (!data) {
             updateTask(rec.id, {
@@ -739,7 +846,7 @@ export default function Studio({
                   "Server returned a success status but no JSON body.",
               },
             });
-            return;
+            return false;
           }
           const urls: string[] = Array.isArray(data.images)
             ? data.images.slice(0, 1)
@@ -749,7 +856,7 @@ export default function Studio({
               status: "failed",
               error: { code: "EmptyResult", message: "API returned no image." },
             });
-            return;
+            return false;
           }
           const patch: Partial<TaskRecord> = {
             status: "succeeded",
@@ -760,6 +867,7 @@ export default function Studio({
           };
           updateTask(rec.id, patch);
           void persistAsset({ ...rec, ...patch } as TaskRecord);
+          return true;
         } catch (e) {
           updateTask(rec.id, {
             status: "failed",
@@ -768,9 +876,28 @@ export default function Studio({
               message: e instanceof Error ? e.message : String(e),
             },
           });
+          return false;
         }
       };
-      void Promise.all(created.map((rec, i) => runOne(rec, i)));
+      void Promise.all(created.map((rec, i) => runOne(rec, i))).then((oks) => {
+        const good = oks.filter(Boolean).length;
+        const many = oks.length > 1;
+        alertDone({
+          ok: good > 0,
+          title:
+            good === oks.length
+              ? many
+                ? `${good} images ready`
+                : "Image ready"
+              : good === 0
+                ? many
+                  ? "Images failed"
+                  : "Image failed"
+                : `${good}/${oks.length} images ready`,
+          body: payload.prompt.slice(0, 140),
+          tag: base,
+        });
+      });
       return true;
     },
     [persistAsset, updateTask]
@@ -780,6 +907,20 @@ export default function Studio({
     setTasks([]);
     setAssets([]);
     void fetch("/api/assets", { method: "DELETE" });
+  }, []);
+
+  const toggleHidden = useCallback((task: TaskRecord) => {
+    if (!task.assetId) return;
+    const next = !task.hidden;
+    const apply = (l: TaskRecord[]) =>
+      l.map((t) => (t.id === task.id ? { ...t, hidden: next } : t));
+    setTasks(apply);
+    setAssets(apply);
+    void fetch(`/api/assets/${task.assetId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hidden: next }),
+    }).catch(() => {});
   }, []);
 
   const removeAsset = useCallback((task: TaskRecord) => {
@@ -850,6 +991,31 @@ export default function Studio({
                 <span className="animate-pulse-dot inline-block">●</span> {activeCount} active
               </span>
             )}
+            <button
+              type="button"
+              onClick={() => void toggleAlerts()}
+              aria-pressed={alertsOn}
+              title={
+                !alertsOn
+                  ? "Play a chime and show a desktop notification when a generation finishes while this window is not focused"
+                  : notifPerm === "granted"
+                    ? "Alerts on — chime + desktop notification when a generation finishes while this window is not focused"
+                    : notifPerm === "denied"
+                      ? "Alerts on (sound + tab title only) — desktop notifications are blocked for this site in your browser settings"
+                      : notifPerm === "unsupported"
+                        ? "Alerts on (sound + tab title only) — this browser has no Notification API"
+                        : "Alerts on (sound + tab title only) — allow notifications to also get a desktop popup"
+              }
+              className={`flex items-center gap-1.5 transition-colors ${
+                alertsOn ? "text-accent" : "text-muted hover:text-ink"
+              }`}
+            >
+              <span aria-hidden>{alertsOn ? "🔔" : "🔕"}</span>
+              <span className="hidden sm:inline">
+                alerts {alertsOn ? "on" : "off"}
+                {alertsOn && notifPerm !== "granted" ? " (sound)" : ""}
+              </span>
+            </button>
             <span className="text-muted">
               session est.{" "}
               <span className="text-accent">
@@ -996,9 +1162,17 @@ export default function Studio({
                   </button>
                 )}
               </div>
+              {pasteNote && (
+                <p className="mb-2 border border-accent/40 bg-accent/5 rounded px-2.5 py-1.5 text-[11px] font-mono text-accent">
+                  {pasteNote}
+                </p>
+              )}
               {assetPane === "uploaded" ? (
                 <div className="max-h-[calc(100vh-140px)] overflow-y-auto pr-1 overscroll-contain">
-                  <UploadsGallery projectId={projectId} />
+                  <UploadsGallery
+                    projectId={projectId}
+                    reloadNonce={uploadsNonce}
+                  />
                 </div>
               ) : gallery.length === 0 ? (
                 <div className="border border-dashed border-line rounded-md p-8 text-center">
@@ -1016,6 +1190,7 @@ export default function Studio({
                     tasks={gallery}
                     onReuse={reuseSettings}
                     onDelete={removeAsset}
+                    onToggleHidden={toggleHidden}
                     projectId={projectId}
                     onChanged={loadAssets}
                   />

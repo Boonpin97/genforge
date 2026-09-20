@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useState, type DragEvent } from "react";
+import { useEffect, useRef, useState, type DragEvent } from "react";
 import { Btn, ErrorBox, StatusBadge, fmtElapsed } from "./ui";
-import { getCachedFile, prefetchFile, revealInExplorer } from "./asset-file-cache";
+import { prefetchFile, revealInExplorer } from "./asset-file-cache";
 import { formatSGD } from "@/lib/pricing";
 import type { ImageUsage, TaskRecord, VideoUsage } from "@/lib/types";
 
@@ -96,23 +96,191 @@ function dragOut(url: string, isVid: boolean, id: string) {
     : `${window.location.origin}${url}`;
   return {
     draggable: true,
-    title: "Drag out to Explorer to save (for Clipchamp use 📂 show in Explorer)",
+    title: "Drag out to an Explorer window to save · for Clipchamp use 📋 copy file, then Ctrl+V",
     onDragStart: (e: DragEvent) => {
       e.dataTransfer.setData(
         "DownloadURL",
         `${isVid ? "video/mp4" : "image/png"}:genforge-${id.slice(0, 8)}.${isVid ? "mp4" : "png"}:${abs}`
       );
       e.dataTransfer.setData("text/plain", abs);
-      const file = getCachedFile(abs);
-      if (file) {
-        try {
-          e.dataTransfer.items.add(file);
-        } catch {}
-      }
       void prefetchFile(abs, `genforge-${id.slice(0, 8)}`);
       e.dataTransfer.effectAllowed = "copy";
     },
   };
+}
+
+function timecode(t: number): string {
+  const safe = Number.isFinite(t) && t > 0 ? t : 0;
+  const secs = Math.floor(safe);
+  const cs = Math.floor((safe - secs) * 100);
+  return `${String(secs).padStart(2, "0")}:${String(cs).padStart(2, "0")}`;
+}
+
+type FrameCbVideo = HTMLVideoElement & {
+  requestVideoFrameCallback?: (
+    cb: (now: number, meta: { mediaTime: number }) => void
+  ) => number;
+  cancelVideoFrameCallback?: (handle: number) => void;
+};
+
+function VideoPlayer({ task, url }: { task: TaskRecord; url: string }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const tcRef = useRef<HTMLSpanElement | null>(null);
+  const durRef = useRef<HTMLSpanElement | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    const v = videoRef.current as FrameCbVideo | null;
+    if (!v) return;
+    let raf = 0;
+    let vfc = 0;
+    let alive = true;
+    const paint = (t: number) => {
+      if (tcRef.current) tcRef.current.textContent = timecode(t);
+    };
+    const paintDuration = () => {
+      if (durRef.current)
+        durRef.current.textContent = Number.isFinite(v.duration)
+          ? `${v.duration.toFixed(1)}s`
+          : "--";
+    };
+    if (typeof v.requestVideoFrameCallback === "function") {
+      const step = (_now: number, meta: { mediaTime: number }) => {
+        if (!alive) return;
+        paint(meta.mediaTime);
+        vfc = v.requestVideoFrameCallback!(step);
+      };
+      vfc = v.requestVideoFrameCallback(step);
+    } else {
+      const loop = () => {
+        if (!alive) return;
+        paint(v.currentTime);
+        raf = requestAnimationFrame(loop);
+      };
+      raf = requestAnimationFrame(loop);
+    }
+    const onSync = () => paint(v.currentTime);
+    const onMeta = () => {
+      paintDuration();
+      paint(v.currentTime);
+    };
+    v.addEventListener("seeked", onSync);
+    v.addEventListener("timeupdate", onSync);
+    v.addEventListener("loadedmetadata", onMeta);
+    onMeta();
+    return () => {
+      alive = false;
+      if (raf) cancelAnimationFrame(raf);
+      if (vfc && typeof v.cancelVideoFrameCallback === "function")
+        v.cancelVideoFrameCallback(vfc);
+      v.removeEventListener("seeked", onSync);
+      v.removeEventListener("timeupdate", onSync);
+      v.removeEventListener("loadedmetadata", onMeta);
+    };
+  }, [url]);
+
+  function flash(msg: string, ms = 4000) {
+    setNote(msg);
+    window.setTimeout(() => setNote(null), ms);
+  }
+
+  function grabFrame() {
+    const v = videoRef.current;
+    if (!v) return;
+    const w = v.videoWidth;
+    const h = v.videoHeight;
+    if (!w || !h) {
+      flash("frame not ready yet — let the video load first");
+      return;
+    }
+    try {
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) throw new Error("no 2d context");
+      ctx.drawImage(v, 0, 0, w, h);
+      const tc = timecode(v.currentTime).replace(":", "-");
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          flash("could not encode this frame");
+          return;
+        }
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = href;
+        a.download = `frame-${tc}-${task.id.slice(0, 8)}.png`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.setTimeout(() => URL.revokeObjectURL(href), 15000);
+        flash(`saved frame-${tc} (${w}×${h}) to your downloads`, 5000);
+      }, "image/png");
+    } catch {
+      flash(
+        task.assetId
+          ? "this frame could not be read from the video"
+          : "frame grab needs the saved copy — it works once the asset is stored locally",
+        6000
+      );
+    }
+  }
+
+  return (
+    <div>
+      <video
+        ref={videoRef}
+        src={url}
+        controls
+        playsInline
+        preload="metadata"
+        {...dragOut(url, true, task.id)}
+        className="w-full rounded border border-line bg-black max-h-[480px]"
+      />
+      <div className="mt-2 flex flex-wrap gap-3 items-center">
+        <span
+          className="font-mono text-xs text-muted"
+          title="Current position · seconds:hundredths"
+        >
+          <span ref={tcRef} className="text-accent">
+            00:00
+          </span>
+          <span> / </span>
+          <span ref={durRef}>--</span>
+        </span>
+        <button
+          type="button"
+          onClick={grabFrame}
+          title="Save the frame showing right now as a PNG"
+          className="text-xs font-mono text-muted hover:text-accent hover:underline"
+        >
+          ⧉ grab frame
+        </button>
+        <a
+          href={url}
+          download
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs font-mono text-accent hover:underline"
+        >
+          ⬇ download{task.assetId ? "" : " (link expires in 24h)"}
+        </a>
+        {task.assetId && (
+          <button
+            type="button"
+            onClick={() => void revealInExplorer(task.assetId!)}
+            title="Opens the folder with this video selected"
+            className="text-xs font-mono text-muted hover:text-ink hover:underline"
+          >
+            📂 show in Explorer
+          </button>
+        )}
+      </div>
+      {note && (
+        <p className="mt-1.5 text-[11px] font-mono text-accent">{note}</p>
+      )}
+    </div>
+  );
 }
 
 function Usage({ task }: { task: TaskRecord }) {
@@ -314,37 +482,7 @@ export default function TaskCard({
           />
         )}
 
-        {task.videoUrl && (
-          <div>
-            <video
-              src={task.videoUrl}
-              controls
-              {...dragOut(task.videoUrl, true, task.id)}
-              className="w-full rounded border border-line bg-black max-h-[480px]"
-            />
-            <div className="mt-2 flex gap-3 items-center">
-              <a
-                href={task.videoUrl}
-                download
-                target="_blank"
-                rel="noreferrer"
-                className="text-xs font-mono text-accent hover:underline"
-              >
-                ⬇ download{task.assetId ? "" : " (link expires in 24h)"}
-              </a>
-              {task.assetId && (
-                <button
-                  type="button"
-                  onClick={() => void revealInExplorer(task.assetId!)}
-                  title="Opens the folder with this video selected — drag the file from Explorer into Clipchamp (browsers can't hand real files to Clipchamp directly)"
-                  className="text-xs font-mono text-muted hover:text-ink hover:underline"
-                >
-                  📂 show in Explorer
-                </button>
-              )}
-            </div>
-          </div>
-        )}
+        {task.videoUrl && <VideoPlayer task={task} url={task.videoUrl} />}
 
         {task.imageUrls && task.imageUrls.length > 0 && (
           <div

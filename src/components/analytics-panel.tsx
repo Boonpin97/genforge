@@ -194,6 +194,14 @@ function rangeBounds(
   }
 }
 
+function fmtDay(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="border border-line bg-panel2 rounded-md px-3 py-2.5">
@@ -253,6 +261,17 @@ export default function AnalyticsPanel({
       ),
     [records, from, to, kind]
   );
+
+  const span = useMemo(() => {
+    if (!filtered.length) return null;
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (const r of filtered) {
+      if (r.createdAt < lo) lo = r.createdAt;
+      if (r.createdAt > hi) hi = r.createdAt;
+    }
+    return { lo, hi };
+  }, [filtered]);
 
   const stats = useMemo(() => {
     let total = 0;
@@ -332,18 +351,34 @@ export default function AnalyticsPanel({
               />
             </span>
           )}
-          <button
-            type="button"
-            onClick={() => setAllScope((v) => !v)}
-            title="Toggle between this project and the whole workspace"
-            className={`ml-auto px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-[0.1em] border transition-colors ${
-              allScope
-                ? "border-warn/60 text-warn bg-warn/10"
-                : "border-line text-muted hover:text-ink"
-            }`}
-          >
-            {allScope ? "all projects" : "this project"}
-          </button>
+          <span className="ml-auto flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => setAllScope(false)}
+              aria-pressed={!allScope}
+              title="Show only cost records from the project you have open"
+              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-[0.1em] border transition-colors ${
+                !allScope
+                  ? "border-accent/60 text-accent bg-accent/10"
+                  : "border-line text-muted hover:text-ink"
+              }`}
+            >
+              current project
+            </button>
+            <button
+              type="button"
+              onClick={() => setAllScope(true)}
+              aria-pressed={allScope}
+              title="Show cost records from every project in this workspace"
+              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-[0.1em] border transition-colors ${
+                allScope
+                  ? "border-accent/60 text-accent bg-accent/10"
+                  : "border-line text-muted hover:text-ink"
+              }`}
+            >
+              all projects
+            </button>
+          </span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 mt-3">
           {KINDS.map((k) => (
@@ -361,6 +396,21 @@ export default function AnalyticsPanel({
             </button>
           ))}
         </div>
+        <p className="mt-3 pt-2.5 border-t border-line text-[11px] font-mono text-muted">
+          showing{" "}
+          <span className="text-accent">{filtered.length}</span>{" "}
+          record{filtered.length === 1 ? "" : "s"} ·{" "}
+          <span className="text-ink">
+            {span
+              ? span.hi - span.lo < 864e5 && range === "today"
+                ? `today, ${fmtDay(span.lo)}`
+                : `${fmtDay(span.lo)} – ${fmtDay(span.hi)}`
+              : range === "all"
+                ? "no records yet"
+                : `${fmtDay(from)} – ${fmtDay(to)}`}
+          </span>{" "}
+          · <span className="text-ink">{allScope ? "all projects" : "current project"}</span>
+        </p>
       </Panel>
 
       {error && <ErrorBox code="Analytics" message={error} />}

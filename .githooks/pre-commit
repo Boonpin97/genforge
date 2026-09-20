@@ -1,0 +1,61 @@
+#!/bin/sh
+#
+# GENFORGE pre-commit guard.
+#
+# This repository is public. Everything under data/ is personal material —
+# generated videos, character reference photos, voice samples, uploads,
+# analytics — and .env files hold live API keys. Neither may ever be committed.
+#
+# Enabled per clone with:  git config core.hooksPath .githooks
+# Bypass deliberately with: git commit --no-verify
+#
+
+# core.quotePath=false keeps non-ASCII names (e.g. 武侠) unquoted, so the
+# path patterns below still match them.
+staged=$(git -c core.quotePath=false diff --cached --name-only --diff-filter=ACMR)
+[ -z "$staged" ] && exit 0
+
+tmp="${TMPDIR:-/tmp}/genforge-precommit.$$"
+: > "$tmp"
+trap 'rm -f "$tmp"' EXIT
+
+# ---- 1. blocked paths -------------------------------------------------------
+printf '%s\n' "$staged" | while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    .env.example)
+      ;;
+    data/* | */data/*)
+      printf '  %s\n      personal material (assets / characters / uploads / analytics)\n' "$f" >> "$tmp"
+      ;;
+    .env | .env.* | */.env | */.env.*)
+      printf '  %s\n      environment file — may contain a live API key\n' "$f" >> "$tmp"
+      ;;
+    *.pem | *.key | *.p12 | *.pfx)
+      printf '  %s\n      private key material\n' "$f" >> "$tmp"
+      ;;
+  esac
+done
+
+# ---- 2. secrets pasted into otherwise innocent files ------------------------
+leaks=$(git diff --cached -U0 --diff-filter=ACMR |
+  grep -E '^\+' |
+  grep -vE '^\+\+\+' |
+  grep -nIE 'sk-[A-Za-z0-9_-]{20,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|gh[pousr]_[A-Za-z0-9]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY' |
+  grep -vE 'x{8,}|X{8,}|your-key|placeholder|EXAMPLE' |
+  head -5)
+
+if [ -n "$leaks" ]; then
+  printf '  (staged content)\n      a line looks like a real API key or private key:\n' >> "$tmp"
+  printf '%s\n' "$leaks" | sed 's/^/        /' | cut -c1-160 >> "$tmp"
+fi
+
+# ---- 3. verdict -------------------------------------------------------------
+if [ -s "$tmp" ]; then
+  printf '\n\033[31mpre-commit blocked this commit — %s is a PUBLIC repository\033[0m\n\n' "$(basename "$(git rev-parse --show-toplevel)")"
+  cat "$tmp"
+  printf '\nUnstage these, or run  git commit --no-verify  if you are certain.\n\n'
+  exit 1
+fi
+
+exit 0
