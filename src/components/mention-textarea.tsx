@@ -22,6 +22,8 @@ type MentionItem =
     };
 
 const TRIGGER_RE = /(?:^|[^\w])@([^\s@]*)$/;
+const BLOCK_TAGS =
+  /^(DIV|P|LI|UL|OL|SECTION|ARTICLE|BLOCKQUOTE|PRE|H[1-6]|TABLE|TR)$/;
 
 function isVideoSrc(u: string): boolean {
   return /^blob:/i.test(u) || /\.(mp4|mov)(\?|$)/i.test(u);
@@ -71,64 +73,101 @@ function makeChip(token: string, thumb?: string, text?: string): HTMLElement {
   return chip;
 }
 
-function lenOf(n: Node): number {
-  if (n.nodeType === 3) return (n.nodeValue || "").length;
-  if (n.nodeType === 1) {
-    const e = n as HTMLElement;
-    if (e.dataset?.token) return chipText(e).length;
-    if (e.tagName === "BR") return 1;
-    let s = 0;
-    e.childNodes.forEach((c) => (s += lenOf(c)));
-    return s;
-  }
-  return 0;
+type Seg = { node: Node; start: number; len: number };
+type Point = { node: Node; offset: number; pos: number };
+type Scan = { text: string; segs: Seg[]; points: Point[]; caret: number };
+
+function scan(root: Node, anchor?: { node: Node; offset: number } | null): Scan {
+  let text = "";
+  let caret = -1;
+  let seen = false;
+  const segs: Seg[] = [];
+  const points: Point[] = [];
+  const hit = (p: number) => {
+    if (caret < 0) caret = p;
+  };
+
+  const walk = (parent: Node) => {
+    const kids = Array.from(parent.childNodes);
+    for (let i = 0; i < kids.length; i++) {
+      if (anchor && anchor.node === parent && anchor.offset === i)
+        hit(text.length);
+      const n = kids[i];
+      if (n.nodeType === 3) {
+        const s = n.nodeValue || "";
+        if (anchor && anchor.node === n)
+          hit(text.length + Math.min(anchor.offset, s.length));
+        segs.push({ node: n, start: text.length, len: s.length });
+        text += s;
+        if (s.length) seen = true;
+        continue;
+      }
+      if (n.nodeType !== 1) continue;
+      const e = n as HTMLElement;
+      if (e.dataset?.token) {
+        const t = chipText(e);
+        points.push({ node: parent, offset: i, pos: text.length });
+        if (anchor && (anchor.node === e || e.contains(anchor.node)))
+          hit(text.length + t.length);
+        text += t;
+        seen = true;
+        points.push({ node: parent, offset: i + 1, pos: text.length });
+        continue;
+      }
+      if (e.tagName === "BR") {
+        if (anchor && anchor.node === e) hit(text.length);
+        points.push({ node: parent, offset: i, pos: text.length });
+        if (i < kids.length - 1) {
+          text += "\n";
+          seen = true;
+        }
+        continue;
+      }
+      if (BLOCK_TAGS.test(e.tagName)) {
+        if (seen) text += "\n";
+        seen = true;
+        points.push({ node: e, offset: 0, pos: text.length });
+        walk(e);
+        continue;
+      }
+      walk(e);
+    }
+    if (anchor && anchor.node === parent && anchor.offset >= kids.length)
+      hit(text.length);
+  };
+
+  walk(root);
+  return { text, segs, points, caret };
 }
 
 function serialize(root: Node): string {
-  let out = "";
-  root.childNodes.forEach((n) => {
-    if (n.nodeType === 3) out += n.nodeValue || "";
-    else if (n.nodeType === 1) {
-      const e = n as HTMLElement;
-      if (e.dataset?.token) out += chipText(e);
-      else if (e.tagName === "BR") out += "\n";
-      else out += serialize(e);
-    }
-  });
-  return out;
+  return scan(root).text;
 }
 
-function locate(root: Node, target: number): [Node, number] | null {
-  let pos = 0;
-  const visit = (n: Node): [Node, number] | null => {
-    if (n.nodeType === 3) {
-      const len = (n.nodeValue || "").length;
-      if (pos + len >= target) return [n, target - pos];
-      pos += len;
-      return null;
+function toDom(s: Scan, target: number): [Node, number] | null {
+  let best: [Node, number] | null = null;
+  for (const seg of s.segs) {
+    if (target >= seg.start && target <= seg.start + seg.len) {
+      best = [seg.node, target - seg.start];
+      if (target < seg.start + seg.len) return best;
     }
-    if (n.nodeType === 1) {
-      const e = n as HTMLElement;
-      if (e.dataset?.token) {
-        pos += chipText(e).length;
-        return null;
-      }
-      if (e.tagName === "BR") {
-        pos += 1;
-        return null;
-      }
-      for (const c of Array.from(e.childNodes)) {
-        const r = visit(c);
-        if (r) return r;
-      }
-    }
-    return null;
-  };
-  for (const c of Array.from(root.childNodes)) {
-    const r = visit(c);
-    if (r) return r;
   }
-  return null;
+  if (best) return best;
+  let pt: Point | null = null;
+  for (const p of s.points)
+    if (p.pos <= target && (!pt || p.pos >= pt.pos)) pt = p;
+  return pt ? [pt.node, pt.offset] : null;
+}
+
+function normalizeCR(root: Node) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const hits: Text[] = [];
+  let n = walker.nextNode();
+  while (n) {
+    if ((n.nodeValue || "").includes("\r")) hits.push(n as Text);
+    n = walker.nextNode();
+  }
+  for (const t of hits) t.nodeValue = (t.nodeValue || "").replace(/\r\n?/g, "\n");
 }
 
 export default function MentionTextArea({
@@ -163,9 +202,12 @@ export default function MentionTextArea({
   } | null>(null);
   const [active, setActive] = useState(0);
   const [characters, setCharacters] = useState<Character[]>([]);
-  const historyRef = useRef<string[]>([""]);
+  const historyRef = useRef<{ text: string; pos: number }[]>([
+    { text: "", pos: 0 },
+  ]);
   const histPos = useRef(0);
   const commitTimer = useRef<number | undefined>(undefined);
+  const composing = useRef(false);
 
   useEffect(() => {
     if (!menu && !chipCharacters) return;
@@ -194,42 +236,66 @@ export default function MentionTextArea({
     text: string;
     isChar: boolean;
   }[] {
-    const tokens = getMediaMentions().map((x) => ({
-      token: x.token,
-      thumb: x.thumb,
-      text: x.token,
-      isChar: false,
-    }));
+    const tokens = getMediaMentions()
+      .filter((x) => x.token)
+      .map((x) => ({
+        token: x.token,
+        thumb: x.thumb,
+        text: x.token,
+        isChar: false,
+      }));
     if (chipCharacters)
-      for (const c of characters)
+      for (const c of characters) {
+        const name = (c.name || "").trim();
+        if (!name) continue;
         tokens.push({
-          token: `@${c.name}`,
+          token: `@${name}`,
           thumb: charImgUrl(c, 0),
-          text: c.name,
+          text: name,
           isChar: true,
         });
+      }
     return tokens;
   }
 
   function renderText(text: string) {
     const root = ref.current;
     if (!root) return;
-    const matches: { index: number; len: number; token: string; thumb?: string; ser: string }[] = [];
+    const matches: {
+      index: number;
+      len: number;
+      token: string;
+      thumb?: string;
+      ser: string;
+    }[] = [];
     for (const { token, thumb, text: ser, isChar } of knownTokens()) {
+      if (!ser) continue;
       if (isChar) {
-        const re = new RegExp(`(?<![\\w])@?(?:${escapeRe(ser)}(?![\\w-]))`, "g");
+        const re = new RegExp(`(?<![\\w])(@?${escapeRe(ser)})(?![\\w-])`, "g");
         let m: RegExpExecArray | null;
-        while ((m = re.exec(text)))
-          matches.push({ index: m.index, len: m[0].length, token, thumb, ser });
+        while ((m = re.exec(text))) {
+          if (!m[0].length) {
+            re.lastIndex += 1;
+            continue;
+          }
+          matches.push({
+            index: m.index,
+            len: m[0].length,
+            token,
+            thumb,
+            ser: m[0],
+          });
+        }
       } else {
         let idx = text.indexOf(token);
         while (idx !== -1) {
-          matches.push({ index: idx, len: token.length, token, thumb, ser });
+          matches.push({ index: idx, len: token.length, token, thumb, ser: token });
           idx = text.indexOf(token, idx + 1);
         }
       }
     }
     matches.sort((a, b) => a.index - b.index || b.len - a.len);
+    const scrollTop = root.scrollTop;
     root.textContent = "";
     const frag = document.createDocumentFragment();
     let last = 0;
@@ -242,14 +308,46 @@ export default function MentionTextArea({
     }
     if (last < text.length)
       frag.appendChild(document.createTextNode(text.slice(last)));
+    if (text.endsWith("\n")) frag.appendChild(document.createElement("br"));
     root.appendChild(frag);
+    root.scrollTop = scrollTop;
+  }
+
+  function setCaret(pos: number) {
+    const root = ref.current;
+    if (!root) return;
+    const s = scan(root);
+    const loc = toDom(s, Math.max(0, Math.min(pos, s.text.length)));
+    const r = document.createRange();
+    if (loc) {
+      r.setStart(loc[0], loc[1]);
+      r.collapse(true);
+    } else {
+      r.selectNodeContents(root);
+      r.collapse(false);
+    }
+    const sel = window.getSelection();
+    sel?.removeAllRanges();
+    sel?.addRange(r);
+  }
+
+  function caretIntoView() {
+    const root = ref.current;
+    const sel = window.getSelection();
+    if (!root || !sel || !sel.rangeCount) return;
+    const rect = sel.getRangeAt(0).getBoundingClientRect();
+    const box = root.getBoundingClientRect();
+    if (!rect.height && !rect.top) return;
+    if (rect.top < box.top) root.scrollTop -= box.top - rect.top + 4;
+    else if (rect.bottom > box.bottom)
+      root.scrollTop += rect.bottom - box.bottom + 4;
   }
 
   useEffect(() => {
     if (value === lastEmit.current) return;
     lastEmit.current = value;
     renderText(value);
-    historyRef.current = [value];
+    historyRef.current = [{ text: value, pos: value.length }];
     histPos.current = 0;
     const root = ref.current;
     if (!root) return;
@@ -269,7 +367,7 @@ export default function MentionTextArea({
 
   useEffect(() => {
     if (ref.current && !ref.current.textContent) renderText(value);
-    historyRef.current = [value];
+    historyRef.current = [{ text: value, pos: value.length }];
     histPos.current = 0;
     return () => {
       if (commitTimer.current !== undefined)
@@ -283,71 +381,58 @@ export default function MentionTextArea({
     if (sigRef.current === mediaSignature) return;
     sigRef.current = mediaSignature;
     const root = ref.current;
-    if (!root) return;
-    const text = serialize(root);
-    const pos = caretPos();
-    renderText(text);
-    lastEmit.current = text;
-    if (pos >= 0 && document.activeElement === root) {
-      const loc = locate(root, pos);
-      if (loc) {
-        const r = document.createRange();
-        r.setStart(loc[0], loc[1]);
-        r.collapse(true);
-        const sel = window.getSelection();
-        sel?.removeAllRanges();
-        sel?.addRange(r);
-      }
+    if (!root || composing.current) return;
+    const focused = document.activeElement === root;
+    const s = readScan();
+    if (!s) return;
+    renderText(s.text);
+    if (s.text !== lastEmit.current) {
+      lastEmit.current = s.text;
+      onChange(s.text);
     }
+    if (focused && s.caret >= 0) setCaret(s.caret);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaSignature]);
 
-  function caretPos(): number {
+  function readScan(): Scan | null {
     const root = ref.current;
+    if (!root) return null;
     const sel = window.getSelection();
-    if (!root || !sel || !sel.rangeCount) return -1;
-    const { anchorNode, anchorOffset } = sel;
-    if (!anchorNode || !root.contains(anchorNode)) return -1;
-    let pos = 0;
-    let found = false;
-    const visit = (n: Node): void => {
-      if (found) return;
-      if (n === anchorNode) {
-        if (n.nodeType === 3) pos += Math.min(anchorOffset, (n.nodeValue || "").length);
-        else
-          for (let i = 0; i < Math.min(anchorOffset, n.childNodes.length); i++)
-            pos += lenOf(n.childNodes[i]);
-        found = true;
-        return;
-      }
-      if (n.nodeType === 3) {
-        pos += (n.nodeValue || "").length;
-        return;
-      }
-      if (n.nodeType === 1) {
-        const e = n as HTMLElement;
-        if (e.dataset?.token) {
-          if (e.contains(anchorNode)) {
-            pos += chipText(e).length;
-            found = true;
-          } else pos += chipText(e).length;
-          return;
-        }
-        if (e.tagName === "BR") {
-          pos += 1;
-          return;
-        }
-        e.childNodes.forEach(visit);
-      }
-    };
-    visit(root);
-    return found ? pos : -1;
+    const anchor =
+      sel && sel.anchorNode && root.contains(sel.anchorNode)
+        ? { node: sel.anchorNode, offset: sel.anchorOffset }
+        : null;
+    return scan(root, anchor);
   }
 
-  function emit() {
+  function selectionSpan(): number {
+    const root = ref.current;
+    const sel = window.getSelection();
+    if (!root || !sel || !sel.rangeCount) return 0;
+    const r = sel.getRangeAt(0);
+    if (r.collapsed || !root.contains(r.startContainer)) return 0;
+    const a = scan(root, { node: r.startContainer, offset: r.startOffset }).caret;
+    const b = scan(root, { node: r.endContainer, offset: r.endOffset }).caret;
+    return a >= 0 && b >= 0 ? Math.abs(b - a) : 0;
+  }
+
+  function overLimit(s: Scan): boolean {
+    const prev = lastEmit.current;
+    if (!maxLength || s.text.length <= maxLength) return false;
+    if (s.text.length <= prev.length) return false;
+    const delta = s.text.length - prev.length;
+    const pos = (s.caret < 0 ? s.text.length : s.caret) - delta;
+    renderText(prev);
+    emit(prev);
+    setCaret(pos);
+    caretIntoView();
+    return true;
+  }
+
+  function emit(text?: string) {
     const root = ref.current;
     if (!root) return;
-    const v = serialize(root);
+    const v = text ?? serialize(root);
     lastEmit.current = v;
     onChange(v);
   }
@@ -359,10 +444,18 @@ export default function MentionTextArea({
     }
     const root = ref.current;
     if (!root) return;
-    const text = serialize(root);
+    const s = readScan();
+    if (!s) return;
     const h = historyRef.current;
-    if (text === h[histPos.current]) return;
-    historyRef.current = [...h.slice(0, histPos.current + 1), text].slice(-80);
+    const pos = s.caret >= 0 ? s.caret : s.text.length;
+    if (s.text === h[histPos.current]?.text) {
+      h[histPos.current].pos = pos;
+      return;
+    }
+    historyRef.current = [
+      ...h.slice(0, histPos.current + 1),
+      { text: s.text, pos },
+    ].slice(-80);
     histPos.current = historyRef.current.length - 1;
   }
 
@@ -371,20 +464,15 @@ export default function MentionTextArea({
     commitTimer.current = window.setTimeout(commit, 500);
   }
 
-  function applyHistory(text: string) {
+  function applyHistory(entry: { text: string; pos: number }) {
     const root = ref.current;
     if (!root) return;
-    renderText(text);
-    lastEmit.current = text;
-    onChange(text);
+    renderText(entry.text);
+    lastEmit.current = entry.text;
+    onChange(entry.text);
     requestAnimationFrame(() => {
-      const r = document.createRange();
-      r.selectNodeContents(root);
-      r.collapse(false);
-      const sel = window.getSelection();
-      sel?.removeAllRanges();
-      sel?.addRange(r);
-      root.scrollTop = root.scrollHeight;
+      setCaret(entry.pos);
+      caretIntoView();
     });
   }
 
@@ -402,18 +490,16 @@ export default function MentionTextArea({
     applyHistory(h[histPos.current]);
   }
 
-  function detect() {
-    const pos = caretPos();
-    if (pos < 0) {
+  function detect(s?: Scan | null) {
+    const cur = s ?? readScan();
+    if (!cur || cur.caret < 0) {
       setMenu(null);
       return;
     }
-    const root = ref.current;
-    if (!root) return;
-    const before = serialize(root).slice(0, pos);
+    const before = cur.text.slice(0, cur.caret);
     const m = TRIGGER_RE.exec(before);
     if (m) {
-      setMenu({ at: pos - m[1].length - 1, end: pos, query: m[1] });
+      setMenu({ at: cur.caret - m[1].length - 1, end: cur.caret, query: m[1] });
       setActive(0);
     } else setMenu(null);
   }
@@ -451,38 +537,16 @@ export default function MentionTextArea({
     const item = items[i];
     if (!root || !item || !menu) return;
     commit();
-    const a = locate(root, menu.at);
-    const b = locate(root, menu.end);
+    const s = scan(root);
+    const a = toDom(s, menu.at);
+    const b = toDom(s, menu.end);
     if (!a || !b) return;
     const sel = window.getSelection();
     const range = document.createRange();
     range.setStart(a[0], a[1]);
     range.setEnd(b[0], b[1]);
     range.deleteContents();
-    if (item.kind === "character") {
-      if (chipCharacters) {
-        const name = item.character.name;
-        const chip = makeChip(
-          `@${name}`,
-          charImgUrl(item.character, 0),
-          name
-        );
-        range.insertNode(chip);
-        const space = document.createTextNode(" ");
-        chip.after(space);
-        range.setStartAfter(space);
-        range.collapse(true);
-        if (sel) {
-          sel.removeAllRanges();
-          sel.addRange(range);
-        }
-        root.focus();
-        setMenu(null);
-        emit();
-        commit();
-        onPickCharacter?.(item.character);
-        return;
-      }
+    if (item.kind === "character" && !chipCharacters) {
       range.collapse(true);
       if (sel) {
         sel.removeAllRanges();
@@ -494,11 +558,18 @@ export default function MentionTextArea({
       onPickCharacter?.(item.character);
       return;
     }
-    const chip = makeChip(item.token, item.thumb);
+    const chip =
+      item.kind === "character"
+        ? makeChip(
+            `@${item.character.name}`,
+            charImgUrl(item.character, 0),
+            item.character.name
+          )
+        : makeChip(item.token, item.thumb);
     range.insertNode(chip);
     const space = document.createTextNode(" ");
     chip.after(space);
-    range.setStartAfter(space);
+    range.setStart(space, 1);
     range.collapse(true);
     if (sel) {
       sel.removeAllRanges();
@@ -508,6 +579,7 @@ export default function MentionTextArea({
     setMenu(null);
     emit();
     commit();
+    if (item.kind === "character") onPickCharacter?.(item.character);
   }
 
   return (
@@ -521,11 +593,25 @@ export default function MentionTextArea({
         data-placeholder={placeholder}
         spellCheck={false}
         onInput={() => {
-          emit();
+          const s = readScan();
+          if (s && overLimit(s)) return;
+          emit(s?.text);
           scheduleCommit();
-          detect();
+          if (!composing.current) detect(s);
+        }}
+        onCompositionStart={() => {
+          composing.current = true;
+        }}
+        onCompositionEnd={() => {
+          composing.current = false;
+          const s = readScan();
+          if (s && overLimit(s)) return;
+          emit(s?.text);
+          scheduleCommit();
+          detect(s);
         }}
         onKeyUp={(e) => {
+          if (composing.current) return;
           if (
             [
               "ArrowDown",
@@ -540,7 +626,7 @@ export default function MentionTextArea({
             return;
           detect();
         }}
-        onMouseUp={detect}
+        onMouseUp={() => detect()}
         onCopy={(e) => {
           const root = ref.current;
           const sel = window.getSelection();
@@ -561,6 +647,9 @@ export default function MentionTextArea({
           commit();
           const range = sel.getRangeAt(0);
           range.deleteContents();
+          range.collapse(true);
+          sel.removeAllRanges();
+          sel.addRange(range);
           emit();
           commit();
           detect();
@@ -571,41 +660,48 @@ export default function MentionTextArea({
         }}
         onPaste={(e) => {
           e.preventDefault();
-          let text = e.clipboardData.getData("text/plain");
+          let text = e.clipboardData
+            .getData("text/plain")
+            .replace(/\r\n?/g, "\n");
           if (!text) return;
           const root = ref.current;
           if (!root) return;
           const prev = serialize(root);
           if (maxLength) {
-            const room = maxLength - prev.length;
+            const room = maxLength - prev.length + selectionSpan();
             if (room <= 0) return;
             if (text.length > room) text = text.slice(0, room);
           }
           commit();
           document.execCommand("insertText", false, text);
-          commit();
           requestAnimationFrame(() => {
             const el = ref.current;
             if (!el) return;
-            const v = serialize(el);
-            renderText(v);
-            lastEmit.current = v;
+            normalizeCR(el);
+            const s = readScan();
+            if (!s) return;
+            const pos = s.caret;
+            renderText(s.text);
+            lastEmit.current = s.text;
+            onChange(s.text);
+            if (pos >= 0) {
+              setCaret(pos);
+              caretIntoView();
+            }
             commit();
-            const r = document.createRange();
-            r.selectNodeContents(el);
-            r.collapse(false);
-            const s = window.getSelection();
-            s?.removeAllRanges();
-            s?.addRange(r);
             if (chipCharacters && onPickCharacter) {
               for (const c of characters) {
-                const re = new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`);
-                if (re.test(v) && !re.test(prev)) onPickCharacter(c);
+                const name = (c.name || "").trim();
+                if (!name) continue;
+                const re = new RegExp(`(?<![\\w])${escapeRe(name)}(?![\\w-])`);
+                if (re.test(s.text) && !re.test(prev)) onPickCharacter(c);
               }
             }
           });
         }}
         onKeyDown={(e) => {
+          if ((e.nativeEvent as KeyboardEvent).isComposing || e.keyCode === 229)
+            return;
           const mod = e.ctrlKey || e.metaKey;
           if (mod && !e.altKey) {
             const k = e.key.toLowerCase();
@@ -646,7 +742,25 @@ export default function MentionTextArea({
           }
           if (e.key === "Enter") {
             e.preventDefault();
-            document.execCommand("insertText", false, "\n");
+            commit();
+            const s = readScan();
+            if (!s || s.caret < 0) return;
+            const root = ref.current;
+            if (!root) return;
+            const sel = window.getSelection();
+            if (sel && sel.rangeCount && !sel.getRangeAt(0).collapsed)
+              sel.getRangeAt(0).deleteContents();
+            const after = readScan();
+            if (!after || after.caret < 0) return;
+            const pos = after.caret;
+            const next =
+              after.text.slice(0, pos) + "\n" + after.text.slice(pos);
+            if (maxLength && next.length > maxLength) return;
+            renderText(next);
+            emit(next);
+            setCaret(pos + 1);
+            caretIntoView();
+            commit();
           }
         }}
         className="w-full bg-panel2 border border-line rounded px-3 py-2 text-sm leading-5 text-ink outline-none focus:border-accent/60 transition-colors whitespace-pre-wrap break-words overflow-y-auto"

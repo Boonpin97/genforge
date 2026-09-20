@@ -3,7 +3,11 @@
 import { useEffect, useState } from "react";
 import TaskCard from "./task-card";
 import { ASSET_DND } from "./drop-zone";
-import { getCachedFile, prefetchFile, revealInExplorer } from "./asset-file-cache";
+import {
+  copyFileToClipboard,
+  prefetchFile,
+  revealInExplorer,
+} from "./asset-file-cache";
 import { fmtElapsed } from "./ui";
 import { formatSGD } from "@/lib/pricing";
 import type { TaskRecord } from "@/lib/types";
@@ -29,6 +33,7 @@ function Tile({
   now,
   onOpen,
   onDelete,
+  onToggleHidden,
   selecting,
   selected,
 }: {
@@ -38,6 +43,7 @@ function Tile({
   onDelete?: () => void;
   selecting: boolean;
   selected: boolean;
+  onToggleHidden?: () => void;
 }) {
   const active =
     task.status === "submitting" ||
@@ -48,6 +54,7 @@ function Tile({
     : task.imageUrls?.[0]
       ? ("image" as const)
       : null;
+  const [copied, setCopied] = useState<"ok" | "err" | null>(null);
   const assetUrl = task.videoUrl || task.imageUrls?.[0] || "";
   const absUrl = assetUrl
     ? /^https?:/i.test(assetUrl)
@@ -61,7 +68,7 @@ function Tile({
       tabIndex={0}
       title={
         assetUrl
-          ? "Click for details · drag into a reference zone or out to Clipchamp/Explorer · 📂 opens the file in Explorer for a guaranteed drag into Clipchamp"
+          ? "Click for details · drag into a reference zone below, or out to an Explorer window · 📋 copies the file so you can paste it into Clipchamp · 📂 shows it in Explorer"
           : undefined
       }
       draggable={!!assetUrl}
@@ -83,12 +90,6 @@ function Tile({
           "DownloadURL",
           `${isVid ? "video/mp4" : "image/png"}:genforge-${task.id.slice(0, 8)}.${isVid ? "mp4" : "png"}:${absUrl}`
         );
-        const file = getCachedFile(absUrl);
-        if (file) {
-          try {
-            e.dataTransfer.items.add(file);
-          } catch {}
-        }
         void prefetchFile(absUrl, `genforge-${task.id.slice(0, 8)}`);
         e.dataTransfer.effectAllowed = "copy";
       }}
@@ -164,7 +165,7 @@ function Tile({
           <button
             type="button"
             aria-label="Show file in Explorer"
-            title="Show file in Explorer — drag it from there into Clipchamp"
+            title="Show file in Explorer"
             onClick={(e) => {
               e.stopPropagation();
               void revealInExplorer(task.assetId!);
@@ -172,6 +173,58 @@ function Tile({
             className="absolute top-1 right-7 h-5 px-1.5 rounded bg-black/70 text-[10px] font-mono leading-none text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
           >
             📂
+          </button>
+        )}
+        {task.assetId && preview && (
+          <button
+            type="button"
+            aria-label="Copy file to clipboard"
+            title="Copy the file to the clipboard — then paste into Clipchamp's media bin with Ctrl+V"
+            onClick={(e) => {
+              e.stopPropagation();
+              void copyFileToClipboard(task.assetId!).then((r) => {
+                setCopied(r.ok ? "ok" : "err");
+                window.setTimeout(() => setCopied(null), 2200);
+              });
+            }}
+            className="absolute top-1 right-[3.25rem] h-5 px-1.5 rounded bg-black/70 text-[10px] font-mono leading-none text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
+          >
+            📋
+          </button>
+        )}
+        {copied && (
+          <span
+            className={`absolute inset-x-1 bottom-1 z-10 rounded px-1.5 py-1 text-center font-mono text-[10px] leading-tight ${
+              copied === "ok"
+                ? "bg-black/85 text-accent"
+                : "bg-black/85 text-danger"
+            }`}
+          >
+            {copied === "ok"
+              ? "file copied — Ctrl+V in Clipchamp"
+              : "clipboard copy failed"}
+          </span>
+        )}
+        {task.assetId && onToggleHidden && (
+          <button
+            type="button"
+            aria-label={task.hidden ? "Unhide asset" : "Hide asset"}
+            title={
+              task.hidden
+                ? "Unhide — show this asset in the grid again"
+                : "Hide from the grid (the file is kept on disk)"
+            }
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleHidden();
+            }}
+            className={`absolute top-1 right-[4.75rem] h-5 px-1.5 rounded bg-black/70 text-[10px] font-mono leading-none transition-opacity hover:text-accent ${
+              task.hidden
+                ? "text-warn opacity-100"
+                : "text-muted opacity-0 group-hover:opacity-100"
+            }`}
+          >
+            {task.hidden ? "🙈" : "👁"}
           </button>
         )}
         {onDelete && (
@@ -230,18 +283,21 @@ export default function AssetsGallery({
   tasks,
   onReuse,
   onDelete,
+  onToggleHidden,
   projectId,
   onChanged,
 }: {
   tasks: TaskRecord[];
   onReuse: (task: TaskRecord) => void;
   onDelete?: (task: TaskRecord) => void;
+  onToggleHidden?: (task: TaskRecord) => void;
   projectId: string | null;
   onChanged?: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<KindFilter>("all");
   const [thumbSize, setThumbSize] = useState<ThumbSize>("medium");
+  const [showHidden, setShowHidden] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -311,7 +367,10 @@ export default function AssetsGallery({
       t.status === "running"
   );
   const selected = tasks.find((t) => t.id === selectedId) || null;
-  const shown = filter === "all" ? tasks : tasks.filter((t) => t.kind === filter);
+  const visible = showHidden ? tasks : tasks.filter((t) => !t.hidden);
+  const hiddenCount = tasks.filter((t) => t.hidden).length;
+  const shown =
+    filter === "all" ? visible : visible.filter((t) => t.kind === filter);
 
   useEffect(() => {
     if (!anyActive) return;
@@ -319,9 +378,9 @@ export default function AssetsGallery({
     return () => clearInterval(id);
   }, [anyActive]);
   const counts: Record<KindFilter, number> = {
-    all: tasks.length,
-    video: tasks.filter((t) => t.kind === "video").length,
-    image: tasks.filter((t) => t.kind === "image").length,
+    all: visible.length,
+    video: visible.filter((t) => t.kind === "video").length,
+    image: visible.filter((t) => t.kind === "image").length,
   };
 
   useEffect(() => {
@@ -363,8 +422,28 @@ export default function AssetsGallery({
             {f} <span className="opacity-70">({counts[f]})</span>
           </button>
         ))}
+        <button
+          type="button"
+          aria-pressed={showHidden}
+          onClick={() => setShowHidden((v) => !v)}
+          title={
+            hiddenCount
+              ? showHidden
+                ? `Showing ${hiddenCount} hidden asset${hiddenCount === 1 ? "" : "s"} — click to hide them again`
+                : `${hiddenCount} hidden asset${hiddenCount === 1 ? "" : "s"} — click to show them`
+              : "No hidden assets yet — hide one with 👁 on its tile"
+          }
+          className={`ml-auto h-6 px-1.5 rounded text-[10px] font-mono border transition-colors ${
+            showHidden
+              ? "border-warn/60 text-warn bg-warn/10"
+              : "border-line text-muted hover:text-ink"
+          }`}
+        >
+          {showHidden ? "🙈" : "👁"}
+          {hiddenCount > 0 && <span className="ml-1">{hiddenCount}</span>}
+        </button>
         <span
-          className="ml-auto text-[10px] font-mono text-muted mr-1"
+          className="text-[10px] font-mono text-muted mr-1 ml-2"
           title="Thumbnail size"
         >
           size
@@ -467,6 +546,9 @@ export default function AssetsGallery({
             now={now}
             selecting={selecting}
             selected={picked.has(t.id)}
+            onToggleHidden={
+              onToggleHidden ? () => onToggleHidden(t) : undefined
+            }
             onOpen={() =>
               selecting
                 ? t.assetId

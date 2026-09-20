@@ -31,10 +31,6 @@ export async function revealInExplorer(
   }
 }
 
-export function getCachedFile(url: string): File | undefined {
-  return cache.get(url);
-}
-
 export function prefetchFile(url: string, nameBase: string): Promise<File | null> {
   const hit = cache.get(url);
   if (hit) return Promise.resolve(hit);
@@ -58,4 +54,23 @@ export function prefetchFile(url: string, nameBase: string): Promise<File | null
     .finally(() => inflight.delete(url));
   inflight.set(url, p);
   return p;
+}
+
+export async function copyFileToClipboard(
+  assetId: string,
+  index = 0
+): Promise<{ ok: boolean; filename?: string; message?: string }> {
+  try {
+    const res = await fetch(`/api/assets/${assetId}/clipboard`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ index }),
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok)
+      return { ok: false, message: data?.message || `HTTP ${res.status}` };
+    return { ok: true, filename: data?.filename };
+  } catch (e) {
+    return { ok: false, message: e instanceof Error ? e.message : "failed" };
+  }
 }

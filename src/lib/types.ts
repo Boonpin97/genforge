@@ -180,10 +180,12 @@ export type StoredAsset = {
   refs: AssetRefMeta[];
   projectId?: string | null;
   copiedFrom?: string;
+  hidden?: boolean;
 };
 
 export type TaskRecord = {
   id: string;
+  hidden?: boolean;
   kind: "video" | "image";
   model: string;
   prompt: string;

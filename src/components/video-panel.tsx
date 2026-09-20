@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import DropZone, {
   AddTile,
   blobToDataUrl,
@@ -53,6 +54,7 @@ const TOTAL_BUDGET_SEC = 30;
 const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+const SHORT_PROMPT_WARN_CHARS = 200;
 const IMAGE_EXT = /\.(jpe?g|png|bmp|webp)$/i;
 const AUDIO_EXT = /\.(mp3|wav|m4a|aac|ogg)$/i;
 
@@ -83,6 +85,7 @@ export default function VideoPanel({
   const [resolution, setResolution] = useState("480P");
   const [ratio, setRatio] = useState("16:9");
   const [duration, setDuration] = useState(30);
+  const [smartDuration, setSmartDuration] = useState(false);
   const [audio, setAudio] = useState(true);
   const [watermark, setWatermark] = useState(false);
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -91,9 +94,12 @@ export default function VideoPanel({
   const [genMode, setGenMode] = useState<"text" | "frame">("text");
   const [firstFrame, setFirstFrame] = useState<MediaItem | null>(null);
   const [lastFrame, setLastFrame] = useState<MediaItem | null>(null);
+  const [warnedText, setWarnedText] = useState<string | null>(null);
 
   const showFrameMode = videoProvider === "qwencloud";
   const frameMode = showFrameMode && genMode === "frame";
+  const smartCapable = !model.includes("/") && !frameMode;
+  const smartOn = smartDuration && smartCapable;
 
   const images = items.filter((i) => i.kind === "image");
   const videos = items.filter((i) => i.kind === "video");
@@ -122,6 +128,7 @@ export default function VideoPanel({
     itemsRef.current = items;
   }, [items]);
 
+
   const injectionRef = useRef(0);
 
   const reuseRef = useRef(0);
@@ -136,7 +143,8 @@ export default function VideoPanel({
     setModel(s.model);
     setResolution(s.resolution);
     setRatio(s.ratio);
-    setDuration(s.duration);
+    setSmartDuration(s.duration === -1);
+    setDuration((d) => (s.duration === -1 ? d : s.duration));
     setAudio(s.audio);
     setWatermark(s.watermark);
     const toItem = (m: MediaPayload, fallback: string): MediaItem => {
@@ -388,17 +396,40 @@ export default function VideoPanel({
     return { refs, warnings };
   }
 
-  async function injectCharacter(c: Character) {
-    if (itemsRef.current.some((i) => i.characterId === c.id)) return;
-    const working = [...itemsRef.current];
+  async function injectCharacter(
+    c: Character,
+    base?: MediaItem[]
+  ): Promise<MediaItem[]> {
+    const start = base ?? itemsRef.current;
+    if (start.some((i) => i.characterId === c.id)) return start;
+    const working = [...start];
     const r = await attachRefs(working, c);
     if (!r.ok) {
       notify(r.msg || `Could not attach ${c.name}`);
-      return;
+      return working;
     }
     r.warnings.forEach(notify);
     notify(
       `Character "${c.name}" references attached — description is added when you generate`
+    );
+    return working;
+  }
+
+  async function findDeferredCharacters(text: string): Promise<Character[]> {
+    let chars: Character[] = [];
+    try {
+      const res = await fetch(
+        `/api/characters?project=${projectId === null ? "none" : projectId}`
+      );
+      const d = await res.json();
+      chars = Array.isArray(d.characters) ? d.characters : [];
+    } catch {
+      chars = [];
+    }
+    return chars.filter(
+      (c) =>
+        new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text) &&
+        !itemsRef.current.some((i) => i.characterId === c.id)
     );
   }
 
@@ -525,11 +556,10 @@ export default function VideoPanel({
               return;
             }
             vidSec += dur;
-            if (vidSec > MAX_VIDEO_TOTAL_SEC) {
-              errs.push(
+            if (vidSec > MAX_VIDEO_TOTAL_SEC)
+              notify(
                 `Combined reference video duration would exceed ${MAX_VIDEO_TOTAL_SEC}s`
               );
-            }
             const form = new FormData();
             form.append("file", file);
             form.append("model", "wan3.0-video");
@@ -703,9 +733,11 @@ export default function VideoPanel({
       .join("|");
   }
 
-  async function buildInventory(): Promise<string[]> {
+  async function buildInventory(list?: MediaItem[]): Promise<string[]> {
     if (frameMode) return [];
-    const ready = itemsRef.current.filter((i) => i.state === "ready" && i.url);
+    const ready = (list ?? itemsRef.current).filter(
+      (i) => i.state === "ready" && i.url
+    );
     let chars: Character[] = [];
     try {
       const res = await fetch(
@@ -761,7 +793,10 @@ export default function VideoPanel({
     }
     setRewriting(true);
     try {
-      const inventory = await buildInventory();
+      let list = itemsRef.current;
+      for (const c of await findDeferredCharacters(text))
+        list = await injectCharacter(c, list);
+      const inventory = await buildInventory(list);
       const res = await fetch("/api/rewrite-prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -772,7 +807,7 @@ export default function VideoPanel({
         throw new Error(data?.message || `Rewrite failed (HTTP ${res.status})`);
       setRewrote(String(data.rewrote || ""));
       setPromptTab("rewritten");
-      setRewriteSig(readySig(itemsRef.current));
+      setRewriteSig(readySig(list));
       notify("Rewritten request ready — review it, then generate");
     } catch (e) {
       notify(`Rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -781,10 +816,15 @@ export default function VideoPanel({
     }
   }
 
-  async function handleSubmit() {
+  async function handleSubmit(confirmed = false) {
     setNotices([]);
     const useRewritten = promptTab === "rewritten";
     const sourceText = (useRewritten ? rewrote : prompt).trim();
+    if (!confirmed && sourceText.length < SHORT_PROMPT_WARN_CHARS) {
+      setWarnedText(sourceText);
+      return;
+    }
+    setWarnedText(null);
     const effectiveModel = model;
     if (frameMode) {
       if (effectiveModel.includes("/")) {
@@ -854,7 +894,14 @@ export default function VideoPanel({
       notify("Remove failed media before generating");
       return;
     }
-    if (totalVideoSec + duration > TOTAL_BUDGET_SEC) {
+    if (smartOn) {
+      if (totalVideoSec > TOTAL_BUDGET_SEC - 2) {
+        notify(
+          `Reference video already uses ${totalVideoSec.toFixed(1)}s of the ${TOTAL_BUDGET_SEC}s budget — no room left for the model to choose a length`
+        );
+        return;
+      }
+    } else if (totalVideoSec + duration > TOTAL_BUDGET_SEC) {
       notify(
         `Reference video (${totalVideoSec.toFixed(1)}s) + duration (${duration}s) exceeds the ${TOTAL_BUDGET_SEC}s combined limit`
       );
@@ -872,33 +919,33 @@ export default function VideoPanel({
           "Media changed since the rewrite — Image/Video numbers in the rewritten text may no longer match"
         );
       let finalPrompt = sourceText;
-      if (!useRewritten) {
-        let chars: Character[] = [];
-        try {
-          const res = await fetch(
-            `/api/characters?project=${projectId === null ? "none" : projectId}`
-          );
-          const d = await res.json();
-          chars = Array.isArray(d.characters) ? d.characters : [];
-        } catch {
-          chars = [];
-        }
-        const text = prompt;
-        const mentioned = chars.filter((c) =>
-          new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text)
+      const searchText = useRewritten ? `${prompt}\n${rewrote}` : prompt;
+      const newlyAttached: Character[] = [];
+      let chars: Character[] = [];
+      try {
+        const res = await fetch(
+          `/api/characters?project=${projectId === null ? "none" : projectId}`
         );
-        const attachedIds = new Set(
-          working
-            .map((i) => i.characterId)
-            .filter((x): x is string => Boolean(x))
-        );
-        const targets = [
-          ...mentioned,
-          ...chars.filter(
-            (c) =>
-              attachedIds.has(c.id) && !mentioned.some((m) => m.id === c.id)
-          ),
-        ];
+        const d = await res.json();
+        chars = Array.isArray(d.characters) ? d.characters : [];
+      } catch {
+        chars = [];
+      }
+      const mentioned = chars.filter((c) =>
+        new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(searchText)
+      );
+      const attachedIds = new Set(
+        working
+          .map((i) => i.characterId)
+          .filter((x): x is string => Boolean(x))
+      );
+      const targets = [
+        ...mentioned,
+        ...chars.filter(
+          (c) =>
+            attachedIds.has(c.id) && !mentioned.some((m) => m.id === c.id)
+        ),
+      ];
       for (const c of targets) {
         if (working.some((i) => i.characterId === c.id)) continue;
         const { refs, msg, warnings } = await getCharRefs(c);
@@ -946,13 +993,21 @@ export default function VideoPanel({
             state: "ready",
             characterId: c.id,
           });
+        newlyAttached.push(c);
       }
+      if (useRewritten) {
+        const extra = newlyAttached
+          .filter((c) => !searchText.includes(`${c.name}:`))
+          .map((c) => bindingLineFrom(working, c));
+        if (extra.length)
+          finalPrompt = `${sourceText}\n\n${extra.join("")}`.trim();
+      } else {
         const lines: string[] = [];
         for (const c of targets) {
-          if (text.includes(`${c.name}:`)) continue;
+          if (searchText.includes(`${c.name}:`)) continue;
           lines.push(bindingLineFrom(working, c));
         }
-        finalPrompt = lines.length ? lines.join("") + text.trim() : text.trim();
+        finalPrompt = lines.length ? lines.join("") + sourceText : sourceText;
       }
       const ready = working.filter((i) => i.state === "ready" && i.url);
       const media: MediaPayload[] = ready.map((i) => ({
@@ -977,7 +1032,7 @@ export default function VideoPanel({
         model,
         resolution,
         ratio,
-        duration,
+        duration: smartOn ? -1 : duration,
         audio,
         watermark,
         media,
@@ -1000,6 +1055,26 @@ export default function VideoPanel({
         }`
     )
     .join("|");
+
+  const activeText = (promptTab === "rewritten" ? rewrote : prompt).trim();
+  const shortPromptWarn = warnedText !== null && warnedText === activeText;
+
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setMounted(true));
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!shortPromptWarn) return;
+    dialogRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setWarnedText(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shortPromptWarn]);
 
   return (
     <div className="flex flex-col gap-4">
@@ -1319,16 +1394,40 @@ export default function VideoPanel({
             />
           </Field>
           <Field
-            label="Duration (seconds)"
-            hint={`2–${durationMax} · refs use ${totalVideoSec.toFixed(1)}s of the ${TOTAL_BUDGET_SEC}s combined budget`}
+            label="Duration"
+            hint={
+              smartOn
+                ? `model picks · up to ${durationMax}s`
+                : `2–${durationMax} · refs use ${totalVideoSec.toFixed(1)}s of the ${TOTAL_BUDGET_SEC}s combined budget`
+            }
           >
-            <Slider
-              value={duration}
-              onChange={setDuration}
-              min={2}
-              max={durationMax}
-              suffix="s"
-            />
+            <div className="flex flex-col gap-2">
+              {smartCapable && (
+                <Seg
+                  value={smartOn ? "smart" : "fixed"}
+                  onChange={(v) => setSmartDuration(v === "smart")}
+                  options={[
+                    { value: "fixed", label: "fixed length" },
+                    { value: "smart", label: "✦ smart" },
+                  ]}
+                />
+              )}
+              {smartOn ? (
+                <p className="text-[11px] font-mono text-warn leading-snug">
+                  ⚠ the model chooses the length (up to {durationMax}s) — you are
+                  billed for what it produces, so the cost is not known until the
+                  video lands
+                </p>
+              ) : (
+                <Slider
+                  value={duration}
+                  onChange={setDuration}
+                  min={2}
+                  max={durationMax}
+                  suffix="s"
+                />
+              )}
+            </div>
           </Field>
           <div className="sm:col-span-2 flex flex-wrap gap-x-6 gap-y-3">
             <Toggle checked={audio} onChange={setAudio} label="Audio" />
@@ -1336,8 +1435,76 @@ export default function VideoPanel({
         </div>
       </Panel>
 
+      {shortPromptWarn &&
+        mounted &&
+        createPortal(
+          <div
+            className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="short-prompt-title"
+            onClick={() => setWarnedText(null)}
+          >
+            <div
+              ref={dialogRef}
+              tabIndex={-1}
+              onClick={(e) => e.stopPropagation()}
+              className="w-full max-w-lg border border-warn/50 bg-panel rounded-lg shadow-2xl shadow-black/70 outline-none animate-rise"
+            >
+              <div className="flex items-center gap-3 px-5 py-3.5 border-b border-warn/30">
+                <span className="text-2xl leading-none text-warn" aria-hidden>
+                  ⚠
+                </span>
+                <h2
+                  id="short-prompt-title"
+                  className="font-display font-semibold text-[15px] tracking-[0.12em] uppercase text-warn"
+                >
+                  Prompt looks too short
+                </h2>
+              </div>
+              <div className="px-5 py-4 space-y-3">
+                <p className="text-sm text-ink/90">
+                  You are about to generate a{" "}
+                  <span className="text-accent font-semibold">video</span> from{" "}
+                  <span className="font-mono text-warn">
+                    {activeText.length}
+                  </span>{" "}
+                  characters — under the {SHORT_PROMPT_WARN_CHARS} recommended.
+                </p>
+                <p className="text-sm text-muted">
+                  Short prompts give weak results and still cost credits. Check
+                  you are in the right tool: this generates a{" "}
+                  <span className="text-ink">video</span>, not an image.
+                </p>
+                {activeText && (
+                  <p className="rounded border border-line bg-panel2 px-3 py-2 font-mono text-[11px] text-muted break-words line-clamp-3">
+                    {activeText}
+                  </p>
+                )}
+              </div>
+              <div className="flex flex-col-reverse sm:flex-row gap-2 px-5 py-3.5 border-t border-line">
+                <Btn
+                  variant="ghost"
+                  onClick={() => setWarnedText(null)}
+                  className="flex-1"
+                >
+                  ← Back to editing
+                </Btn>
+                <Btn
+                  onClick={() => void handleSubmit(true)}
+                  disabled={pending || preparing}
+                  className="flex-1"
+                >
+                  Generate anyway
+                </Btn>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
+
       <Btn
-        onClick={handleSubmit}
+        onClick={() => void handleSubmit()}
         disabled={pending || preparing}
         className="w-full py-3 font-display tracking-[0.2em] uppercase"
       >
@@ -1345,7 +1512,9 @@ export default function VideoPanel({
           ? "Preparing media…"
           : pending
             ? "Uploading media…"
-            : "Generate video"}
+            : smartOn
+              ? "Generate video · smart length"
+              : `Generate video · ${duration}s`}
       </Btn>
     </div>
   );

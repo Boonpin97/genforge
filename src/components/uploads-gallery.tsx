@@ -13,8 +13,10 @@ function timeAgo(ts: number): string {
 
 export default function UploadsGallery({
   projectId,
+  reloadNonce = 0,
 }: {
   projectId: string | null;
+  reloadNonce?: number;
 }) {
   const projectQs = projectId === null ? "none" : projectId;
   const [items, setItems] = useState<UploadRecord[]>([]);
@@ -52,7 +54,7 @@ export default function UploadsGallery({
     return () => {
       cancelled = true;
     };
-  }, [projectQs]);
+  }, [projectQs, reloadNonce]);
 
   useEffect(() => {
     fetch("/api/projects")

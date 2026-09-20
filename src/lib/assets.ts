@@ -311,6 +311,19 @@ export async function failAsset(
   return list[pos];
 }
 
+export async function setAssetHidden(
+  id: string,
+  hidden: boolean
+): Promise<boolean> {
+  const list = await readIndex();
+  const asset = list.find((a) => a.id === id);
+  if (!asset) return false;
+  if (hidden) asset.hidden = true;
+  else delete asset.hidden;
+  await writeIndex(list);
+  return true;
+}
+
 export async function deleteAsset(id: string): Promise<boolean> {
   if (!ID_RE.test(id)) return false;
   const list = await readIndex();

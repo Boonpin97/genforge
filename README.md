@@ -9,13 +9,17 @@ It is designed as an all-in-one, story-to-video workspace in the spirit of OpenA
 ## What it does
 
 - Create separate projects for a shoot, client, or campaign. Each project keeps its generated assets, storyboards, characters, and uploads together. Deleting a project only makes its contents unassigned; it does not delete their files.
-- Generate videos with `wan3.0-video` or `wan3.0-video-prime`, including text-to-video and reference-driven requests. The optional QwenCloud provider also exposes first/last-frame generation.
+- Generate videos with `wan3.0-video` or `wan3.0-video-prime`, including text-to-video and reference-driven requests. Duration can be a fixed 2–30s or **smart**, where the model picks the length itself (wan3.0 models only; the cost is only known once the video lands, since billing follows the produced duration). The optional QwenCloud provider also exposes first/last-frame generation. A prompt under 200 characters opens a "too short / right tool?" dialog that must be dismissed or confirmed before generating.
 - Generate images with `qwen-image-3.0-pro` or `qwen-image-3.0`, including image editing with up to three reference images.
 - Use OpenRouter models by selecting the built-in Nano Banana 2 (`google/gemini-3.1-flash-image`), Grok Imagine Video, or entering another supported `provider/model` ID.
 - Keep a character library with reference images, an optional voice sample, and a reusable description. Attaching a character adds its reference media and identity-binding prompt text to a generation.
-- Use Director to turn a premise and cast into a storyboard in your house style, then revise and save versions. Video Prompt Rewrite formats a prompt and its attached material into a structured Wan reference-to-video request.
-- Save generated results and uploaded image/audio files locally, browse them in the asset library, download or reuse generation settings, and move/copy items between projects.
-- Review estimated, not authoritative, costs for assets and Director/Rewrite runs in Analytics. Rates can be changed with environment variables.
+- Use Director to turn a premise and cast into a storyboard in your house style, then revise and save versions. Video Prompt Rewrite formats a prompt and its attached material into a structured Wan reference-to-video request; characters mentioned by name are attached automatically so their references are included in the rewrite and the generation.
+- Paste a screenshot straight in: Ctrl+V anywhere in the studio saves images (or audio) from the clipboard into the upload library and switches to the Uploaded pane, ready to drag into a reference zone. Pasting text into a prompt is unaffected.
+- Watch a result in the detail view with a frame-accurate `ss:cs` timecode, and click **grab frame** to save the frame currently on screen as a full-resolution PNG.
+- Hide clutter without losing it: 👁 on a gallery tile removes an asset from the grid while keeping every file on disk, and the eye button next to the thumbnail-size controls reveals hidden assets again (hidden ones stay out of the grid by default on every load).
+- Save generated results and uploaded image/audio files locally, browse them in the asset library, download or reuse generation settings, and move/copy items between projects. On Windows, 📋 on a gallery tile copies the actual file to the clipboard under a neutral name (`genforge-<date>-<id>.mp4`, revealing nothing about the prompt), so it can be pasted straight into another app; 📂 shows it in Explorer.
+- Review estimated, not authoritative, costs for assets and Director/Rewrite runs in Analytics, scoped to the current project or to all projects. Rates can be changed with environment variables.
+- Turn on **alerts** in the header to get a chime, a desktop notification, and a tab-title badge when a generation finishes while the window is not focused. The setting is remembered per browser; if you decline the browser's notification prompt, the chime and title badge still work.
 
 Generated media, references, characters, projects, uploads, and analytics records are stored under `data/`, which is intentionally ignored by Git. Generated results are downloaded into the asset library so they remain available after a provider URL expires. Pending video jobs are persisted and resume polling after a page reload.
 
@@ -63,6 +67,18 @@ Use `.env.example` as the complete reference. `.env.local` is read directly by t
 | `PRICE_*` | Cost display only | These are editable USD estimates, not provider billing records. |
 
 DashScope keys are region-locked. Set the base URL to match the key's region before generating.
+
+## Committing safely
+
+This repository is public and `data/` holds personal material (generated videos, character reference photos and voice samples, uploads, analytics). A pre-commit hook in `.githooks/` refuses any commit that stages a path under `data/`, an `.env` file other than `.env.example`, private-key material, or a line that looks like a live API key.
+
+Enable it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+If you ever need to get past it deliberately, `git commit --no-verify`.
 
 ## Development and local servers
 
