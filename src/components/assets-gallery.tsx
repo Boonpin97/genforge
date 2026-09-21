@@ -8,9 +8,12 @@ import {
   prefetchFile,
   revealInExplorer,
 } from "./asset-file-cache";
-import { fmtElapsed } from "./ui";
+import { fmtElapsed, IconBtn } from "./ui";
 import { formatSGD } from "@/lib/pricing";
 import type { TaskRecord } from "@/lib/types";
+
+const overlayBtn =
+  "inline-flex items-center justify-center w-7 h-7 rounded-sm text-xs leading-none text-white/75 hover:text-white hover:bg-white/15 transition-colors";
 
 type KindFilter = "all" | "video" | "image";
 type ThumbSize = "large" | "medium" | "small";
@@ -106,9 +109,9 @@ function Tile({
         {selecting && (
           <span
             aria-hidden
-            className={`absolute top-1.5 left-1.5 z-10 w-4 h-4 rounded-sm border flex items-center justify-center text-[10px] leading-none ${
+            className={`absolute top-1.5 left-1.5 z-10 w-4 h-4 rounded-sm border flex items-center justify-center text-2xs leading-none ${
               selected
-                ? "bg-accent border-accent text-[#10130c]"
+                ? "bg-accent border-accent text-accent-ink"
                 : "bg-black/70 border-muted text-transparent"
             }`}
           >
@@ -141,122 +144,114 @@ function Tile({
             <span className="font-mono text-sm text-warn">
               ⏱ {fmtElapsed(task, now)}
             </span>
-            <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-muted">
+            <span className="font-mono text-2xs text-muted">
               {task.status === "submitting" ? "submitting" : task.kind === "video" ? "rendering" : "drawing"}
             </span>
           </div>
         )}
         {!preview && !active && (
-          <span className="text-danger text-lg font-mono">✕</span>
+          <span className="text-danger text-lg">✕</span>
         )}
-        <span
-          className={`absolute top-1.5 left-1.5 font-display font-semibold text-[9px] tracking-[0.16em] uppercase px-1.5 py-0.5 rounded border bg-black/60 ${
-            task.kind === "video"
-              ? "text-accent border-accent/40"
-              : "text-[#7cc7ff] border-[#7cc7ff]/40"
+        <span className="absolute top-1.5 left-1.5 flex items-center gap-1.5 rounded-full bg-black/65 backdrop-blur-sm px-2 py-1 text-2xs font-medium text-white/90">
+          {active && (
+            <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse-dot" />
+          )}
+          {task.kind === "video" ? "Video" : "Image"}
+        </span>
+        <div
+          className={`absolute top-1.5 right-1.5 flex items-center gap-0.5 rounded-md bg-black/65 backdrop-blur-sm p-0.5 transition-opacity ${
+            task.hidden || task.status === "failed"
+              ? "opacity-100"
+              : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
           }`}
         >
-          {task.kind}
-        </span>
-        {active && (
-          <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full bg-warn animate-pulse-dot" />
-        )}
-        {task.assetId && preview && (
-          <button
-            type="button"
-            aria-label="Show file in Explorer"
-            title="Show file in Explorer"
-            onClick={(e) => {
-              e.stopPropagation();
-              void revealInExplorer(task.assetId!);
-            }}
-            className="absolute top-1 right-7 h-5 px-1.5 rounded bg-black/70 text-[10px] font-mono leading-none text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
-          >
-            📂
-          </button>
-        )}
-        {task.assetId && preview && (
-          <button
-            type="button"
-            aria-label="Copy file to clipboard"
-            title="Copy the file to the clipboard — then paste into Clipchamp's media bin with Ctrl+V"
-            onClick={(e) => {
-              e.stopPropagation();
-              void copyFileToClipboard(task.assetId!).then((r) => {
-                setCopied(r.ok ? "ok" : "err");
-                window.setTimeout(() => setCopied(null), 2200);
-              });
-            }}
-            className="absolute top-1 right-[3.25rem] h-5 px-1.5 rounded bg-black/70 text-[10px] font-mono leading-none text-muted hover:text-accent opacity-0 group-hover:opacity-100 transition-opacity"
-          >
-            📋
-          </button>
-        )}
+          {task.assetId && preview && (
+            <button
+              type="button"
+              aria-label="Show file in Explorer"
+              title="Show file in Explorer"
+              onClick={(e) => {
+                e.stopPropagation();
+                void revealInExplorer(task.assetId!);
+              }}
+              className={overlayBtn}
+            >
+              📂
+            </button>
+          )}
+          {task.assetId && preview && (
+            <button
+              type="button"
+              aria-label="Copy file to clipboard"
+              title="Copy the file to the clipboard, then paste it into Clipchamp's media bin with Ctrl+V"
+              onClick={(e) => {
+                e.stopPropagation();
+                void copyFileToClipboard(task.assetId!).then((r) => {
+                  setCopied(r.ok ? "ok" : "err");
+                  window.setTimeout(() => setCopied(null), 2200);
+                });
+              }}
+              className={overlayBtn}
+            >
+              📋
+            </button>
+          )}
+          {task.assetId && onToggleHidden && (
+            <button
+              type="button"
+              aria-label={task.hidden ? "Unhide asset" : "Hide asset"}
+              title={
+                task.hidden
+                  ? "Unhide — show this asset in the grid again"
+                  : "Hide from the grid (the file stays on disk)"
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                onToggleHidden();
+              }}
+              className={`${overlayBtn} ${task.hidden ? "text-warn" : ""}`}
+            >
+              {task.hidden ? "🙈" : "👁"}
+            </button>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              aria-label="Delete asset"
+              title={
+                task.assetId
+                  ? "Delete saved asset"
+                  : task.status === "failed"
+                    ? "Delete failed generation"
+                    : "Remove from list"
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                onDelete();
+              }}
+              className={`${overlayBtn} hover:text-danger`}
+            >
+              ✕
+            </button>
+          )}
+        </div>
         {copied && (
           <span
-            className={`absolute inset-x-1 bottom-1 z-10 rounded px-1.5 py-1 text-center font-mono text-[10px] leading-tight ${
-              copied === "ok"
-                ? "bg-black/85 text-accent"
-                : "bg-black/85 text-danger"
+            className={`absolute inset-x-1.5 bottom-1.5 z-10 rounded-md bg-black/85 px-2 py-1.5 text-center text-2xs leading-tight ${
+              copied === "ok" ? "text-ok" : "text-danger"
             }`}
           >
             {copied === "ok"
-              ? "file copied — Ctrl+V in Clipchamp"
-              : "clipboard copy failed"}
+              ? "File copied — press Ctrl+V in Clipchamp"
+              : "Could not copy the file"}
           </span>
-        )}
-        {task.assetId && onToggleHidden && (
-          <button
-            type="button"
-            aria-label={task.hidden ? "Unhide asset" : "Hide asset"}
-            title={
-              task.hidden
-                ? "Unhide — show this asset in the grid again"
-                : "Hide from the grid (the file is kept on disk)"
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              onToggleHidden();
-            }}
-            className={`absolute top-1 right-[4.75rem] h-5 px-1.5 rounded bg-black/70 text-[10px] font-mono leading-none transition-opacity hover:text-accent ${
-              task.hidden
-                ? "text-warn opacity-100"
-                : "text-muted opacity-0 group-hover:opacity-100"
-            }`}
-          >
-            {task.hidden ? "🙈" : "👁"}
-          </button>
-        )}
-        {onDelete && (
-          <button
-            type="button"
-            aria-label="Delete asset"
-            title={
-              task.assetId
-                ? "Delete saved asset"
-                : task.status === "failed"
-                  ? "Delete failed generation"
-                  : "Remove from list"
-            }
-            onClick={(e) => {
-              e.stopPropagation();
-              onDelete();
-            }}
-            className={`absolute top-1 right-1 w-5 h-5 rounded bg-black/70 text-muted hover:text-danger text-xs leading-none transition-opacity ${
-              task.status === "failed"
-                ? "opacity-80 group-hover:opacity-100"
-                : "opacity-0 group-hover:opacity-100"
-            }`}
-          >
-            ✕
-          </button>
         )}
       </div>
       <div className="px-2 py-1.5 space-y-0.5">
-        <p className="text-[10px] font-mono text-ink/80 truncate">
+        <p className="text-xs text-ink/80 truncate">
           {task.prompt || <span className="text-muted italic">no prompt</span>}
         </p>
-        <p className="text-[10px] font-mono text-muted flex justify-between gap-2">
+        <p className="text-2xs text-muted flex justify-between gap-2">
           <span className="truncate">
             {task.model}
             {task.assetId ? " · saved" : ""}
@@ -286,6 +281,7 @@ export default function AssetsGallery({
   onToggleHidden,
   projectId,
   onChanged,
+  onUploaded,
 }: {
   tasks: TaskRecord[];
   onReuse: (task: TaskRecord) => void;
@@ -293,6 +289,7 @@ export default function AssetsGallery({
   onToggleHidden?: (task: TaskRecord) => void;
   projectId: string | null;
   onChanged?: () => void;
+  onUploaded?: () => void;
 }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState<KindFilter>("all");
@@ -407,88 +404,95 @@ export default function AssetsGallery({
 
   return (
     <>
-      <div className="flex items-center gap-1.5 mb-3">
-        {(["all", "video", "image"] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            onClick={() => setFilter(f)}
-            className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase tracking-[0.12em] border transition-colors ${
-              filter === f
-                ? "border-accent/60 text-accent bg-accent/10"
-                : "border-line text-muted hover:text-ink"
-            }`}
+      <div className="flex items-center gap-2 mb-3 flex-wrap">
+        <div className="flex gap-0.5 p-1 rounded-md border border-line bg-bg">
+          {(
+            [
+              { id: "all", label: "All" },
+              { id: "video", label: "Video" },
+              { id: "image", label: "Images" },
+            ] as const
+          ).map((f) => (
+            <button
+              key={f.id}
+              type="button"
+              onClick={() => setFilter(f.id)}
+              aria-pressed={filter === f.id}
+              className={`min-h-7 px-2.5 rounded-sm text-xs font-medium transition-colors ${
+                filter === f.id
+                  ? "bg-panel2 text-accent shadow-panel"
+                  : "text-muted hover:text-ink"
+              }`}
+            >
+              {f.label}
+              <span className="ml-1.5 tabular-nums opacity-60">{counts[f.id]}</span>
+            </button>
+          ))}
+        </div>
+
+        <div className="ml-auto flex items-center gap-1">
+          <IconBtn
+            active={showHidden}
+            onClick={() => setShowHidden((v) => !v)}
+            title={
+              hiddenCount
+                ? showHidden
+                  ? `Showing ${hiddenCount} hidden asset${hiddenCount === 1 ? "" : "s"} — click to hide them again`
+                  : `Show ${hiddenCount} hidden asset${hiddenCount === 1 ? "" : "s"}`
+                : "No hidden assets yet — hide one with the eye on its tile"
+            }
           >
-            {f} <span className="opacity-70">({counts[f]})</span>
-          </button>
-        ))}
-        <button
-          type="button"
-          aria-pressed={showHidden}
-          onClick={() => setShowHidden((v) => !v)}
-          title={
-            hiddenCount
-              ? showHidden
-                ? `Showing ${hiddenCount} hidden asset${hiddenCount === 1 ? "" : "s"} — click to hide them again`
-                : `${hiddenCount} hidden asset${hiddenCount === 1 ? "" : "s"} — click to show them`
-              : "No hidden assets yet — hide one with 👁 on its tile"
-          }
-          className={`ml-auto h-6 px-1.5 rounded text-[10px] font-mono border transition-colors ${
-            showHidden
-              ? "border-warn/60 text-warn bg-warn/10"
-              : "border-line text-muted hover:text-ink"
-          }`}
-        >
-          {showHidden ? "🙈" : "👁"}
-          {hiddenCount > 0 && <span className="ml-1">{hiddenCount}</span>}
-        </button>
-        <span
-          className="text-[10px] font-mono text-muted mr-1 ml-2"
-          title="Thumbnail size"
-        >
-          size
-        </span>
-        {(["large", "medium", "small"] as const).map((s) => (
-          <button
-            key={s}
-            type="button"
-            title={`${s} thumbnails`}
-            onClick={() => setThumbSize(s)}
-            className={`w-6 h-6 rounded text-[10px] font-mono uppercase border transition-colors ${
-              thumbSize === s
-                ? "border-accent/60 text-accent bg-accent/10"
-                : "border-line text-muted hover:text-ink"
-            }`}
+            <span aria-hidden>{showHidden ? "🙈" : "👁"}</span>
+            {hiddenCount > 0 && (
+              <span className="ml-0.5 text-2xs tabular-nums">{hiddenCount}</span>
+            )}
+          </IconBtn>
+          <IconBtn
+            active={selecting}
+            onClick={() => {
+              setSelecting((v) => !v);
+              setPicked(new Set());
+            }}
+            title="Select multiple assets to move or copy between projects"
           >
-            {s[0]}
-          </button>
-        ))}
-        <button
-          type="button"
-          title="Select multiple assets to move/copy between projects"
-          onClick={() => {
-            setSelecting((v) => !v);
-            setPicked(new Set());
-          }}
-          className={`w-6 h-6 rounded text-[10px] font-mono uppercase border transition-colors ${
-            selecting
-              ? "border-accent/60 text-accent bg-accent/10"
-              : "border-line text-muted hover:text-ink"
-          }`}
-        >
-          ✓
-        </button>
+            <span aria-hidden>✓</span>
+          </IconBtn>
+          <div className="flex gap-0.5 p-1 rounded-md border border-line bg-bg ml-1">
+            {(
+              [
+                { id: "large", label: "L" },
+                { id: "medium", label: "M" },
+                { id: "small", label: "S" },
+              ] as const
+            ).map((s) => (
+              <button
+                key={s.id}
+                type="button"
+                title={`${s.id} thumbnails`}
+                onClick={() => setThumbSize(s.id)}
+                aria-pressed={thumbSize === s.id}
+                className={`w-7 h-7 rounded-sm text-xs font-medium transition-colors ${
+                  thumbSize === s.id
+                    ? "bg-panel2 text-accent"
+                    : "text-muted hover:text-ink"
+                }`}
+              >
+                {s.label}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
       {selecting && (
-        <div className="flex flex-wrap items-center gap-2 mb-3 border border-line bg-panel2/60 rounded px-3 py-2">
-          <span className="text-[11px] font-mono text-muted">
+        <div className="flex flex-wrap items-center gap-2 mb-3 border border-line bg-panel2/60 rounded-md px-3 py-2">
+          <span className="text-2xs text-muted">
             {picked.size} selected
           </span>
           <select
             value=""
             disabled={!picked.size || bulkBusy}
             onChange={(e) => e.target.value && void bulk("move", e.target.value)}
-            className="bg-panel2 border border-line rounded px-2 py-1 text-[11px] font-mono text-ink outline-none focus:border-accent/60 disabled:opacity-40"
+            className="bg-panel2 border border-line rounded-md px-2.5 h-8 text-xs text-ink outline-none focus:border-accent/60 disabled:opacity-40"
           >
             <option value="">move to…</option>
             {projects
@@ -504,7 +508,7 @@ export default function AssetsGallery({
             value=""
             disabled={!picked.size || bulkBusy}
             onChange={(e) => e.target.value && void bulk("copy", e.target.value)}
-            className="bg-panel2 border border-line rounded px-2 py-1 text-[11px] font-mono text-ink outline-none focus:border-accent/60 disabled:opacity-40"
+            className="bg-panel2 border border-line rounded-md px-2.5 h-8 text-xs text-ink outline-none focus:border-accent/60 disabled:opacity-40"
           >
             <option value="">copy to…</option>
             {projects
@@ -522,12 +526,12 @@ export default function AssetsGallery({
               setSelecting(false);
               setPicked(new Set());
             }}
-            className="text-[11px] font-mono text-muted hover:text-ink"
+            className="text-xs text-muted hover:text-ink"
           >
             cancel
           </button>
           {bulkNotice && (
-            <span className="text-[11px] font-mono text-accent">
+            <span className="text-xs text-ink">
               {bulkNotice}
             </span>
           )}
@@ -583,13 +587,15 @@ export default function AssetsGallery({
               <button
                 type="button"
                 onClick={() => setSelectedId(null)}
-                className="text-xs font-mono text-muted hover:text-ink border border-line hover:border-muted rounded px-2 py-1 transition-colors"
+                className="text-xs text-muted hover:text-ink border border-line hover:border-muted/60 rounded-md px-3 min-h-8 inline-flex items-center transition-colors"
               >
                 ✕ close
               </button>
             </div>
             <TaskCard
               task={selected}
+              projectId={projectId}
+              onUploaded={onUploaded}
               onReuse={
                 selected.settings
                   ? (t) => {

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MentionTextArea from "./mention-textarea";
 import { Btn, ErrorBox, Field, Panel, Seg } from "./ui";
+import { alertDone } from "@/lib/notify";
 import { formatSGD } from "@/lib/pricing";
 import type { ApiError, Character } from "@/lib/types";
 
@@ -29,7 +30,7 @@ export default function DirectorPanel({
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [extraCast, setExtraCast] = useState("");
-  const [model, setModel] = useState("qwen3.8-flash");
+  const [model, setModel] = useState("qwen3.8-max");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [history, setHistory] = useState<ScriptEntry[]>([]);
@@ -181,8 +182,22 @@ export default function DirectorPanel({
             `${target ? "Revision" : "Request"} failed with status ${res.status}`,
           requestId: data.requestId || data.request_id,
         });
+        alertDone({
+          channel: "director",
+          ok: false,
+          title: target ? "Revision failed" : "Storyboard failed",
+          body: data.message || `Request failed with status ${res.status}`,
+          tag: "director",
+        });
         return;
       }
+      alertDone({
+        channel: "director",
+        ok: true,
+        title: target ? "Revision ready" : "Storyboard ready",
+        body: text.slice(0, 140),
+        tag: "director",
+      });
       setHistory((h) => {
         const entry: ScriptEntry = {
           id: data.id || `${target ? "r" : "g"}${Date.now()}`,
@@ -198,9 +213,14 @@ export default function DirectorPanel({
       });
       setPremise("");
     } catch (e) {
-      setError({
-        code: "NetworkError",
-        message: e instanceof Error ? e.message : String(e),
+      const message = e instanceof Error ? e.message : String(e);
+      setError({ code: "NetworkError", message });
+      alertDone({
+        channel: "director",
+        ok: false,
+        title: target ? "Revision failed" : "Storyboard failed",
+        body: message,
+        tag: "director",
       });
     } finally {
       setBusy(false);
@@ -243,14 +263,14 @@ export default function DirectorPanel({
                 key={i}
                 className="border border-line rounded-md p-3 bg-panel2/40 animate-pulse"
               >
-                <div className="h-3 w-16 rounded bg-line" />
-                <div className="mt-2 h-2 w-full rounded bg-line/70" />
-                <div className="mt-1.5 h-2 w-5/6 rounded bg-line/50" />
-                <div className="mt-1.5 h-2 w-2/3 rounded bg-line/40" />
+                <div className="h-3 w-16 rounded-md bg-line" />
+                <div className="mt-2 h-2 w-full rounded-md bg-line/70" />
+                <div className="mt-1.5 h-2 w-5/6 rounded-md bg-line/50" />
+                <div className="mt-1.5 h-2 w-2/3 rounded-md bg-line/40" />
               </div>
             ))}
           </div>
-          <p className="mt-3 text-[11px] font-mono text-muted">
+          <p className="mt-3 text-xs text-muted">
             <span className="animate-pulse-dot inline-block text-warn">●</span>{" "}
             {amending
               ? "director applying your amendment…"
@@ -267,7 +287,7 @@ export default function DirectorPanel({
                 setCreating(true);
                 setSelectedId(null);
               }}
-              className={`text-left px-3 py-2 rounded border text-[11px] font-mono transition-colors flex items-center gap-2 ${
+              className={`text-left px-3 py-2 rounded-md border text-xs transition-colors flex items-center gap-2 ${
                 creating
                   ? "border-accent/60 text-ink bg-accent/10"
                   : "border-dashed border-line text-muted hover:text-ink"
@@ -276,7 +296,7 @@ export default function DirectorPanel({
               <span className="shrink-0 text-accent">＋</span>
               <span className="truncate flex-1">
                 New storyboard
-                {creating ? " — premise below becomes a new script" : ""}
+                {creating ? " — write the premise below" : ""}
               </span>
             </button>
             {history.map((h) => {
@@ -289,7 +309,7 @@ export default function DirectorPanel({
                     setSelectedId(h.id);
                     setCreating(false);
                   }}
-                  className={`text-left px-3 py-2 rounded border text-[11px] font-mono transition-colors flex items-center gap-2 ${
+                  className={`text-left px-3 py-2 rounded-md border text-xs transition-colors flex items-center gap-2 ${
                     on
                       ? "border-accent/60 text-ink bg-accent/10"
                       : "border-line text-muted hover:text-ink"
@@ -306,7 +326,7 @@ export default function DirectorPanel({
                     })}
                   </span>
                   <span
-                    className={`shrink-0 border rounded px-1 text-[9px] uppercase ${
+                    className={`shrink-0 border rounded-md px-1 text-2xs ${
                       h.revised
                         ? "border-warn/50 text-warn"
                         : "border-accent/40 text-accent"
@@ -328,14 +348,14 @@ export default function DirectorPanel({
       )}
       {current ? (
         <Panel
-          title={current.revised ? "Storyboard · revised" : "Storyboard"}
+          title={current.revised ? "Revised storyboard" : "Storyboard"}
         >
           <div className="flex flex-wrap items-center gap-2 mb-3">
-            <Btn variant="ghost" onClick={copyScript}>
-              {copied ? "✓ copied" : "copy"}
+            <Btn variant="ghost" size="sm" onClick={copyScript}>
+              {copied ? "✓ Copied" : "Copy"}
             </Btn>
-            <Btn variant="ghost" onClick={downloadScript}>
-              ⬇ .txt
+            <Btn variant="ghost" size="sm" onClick={downloadScript}>
+              ⬇ Download .txt
             </Btn>
             <select
               value=""
@@ -343,9 +363,9 @@ export default function DirectorPanel({
                 e.target.value && void scriptBulk("move", e.target.value)
               }
               title="Move this storyboard to another project"
-              className="bg-panel2 border border-line rounded px-1.5 py-1 text-[10px] font-mono text-muted outline-none focus:border-accent/60"
+              className="bg-panel2 border border-line rounded-md px-2 min-h-8 text-xs text-muted outline-none focus:border-accent/60"
             >
-              <option value="">move to…</option>
+              <option value="">Move to…</option>
               {projects
                 .filter((p) => p.id !== projectId)
                 .map((p) => (
@@ -361,9 +381,9 @@ export default function DirectorPanel({
                 e.target.value && void scriptBulk("copy", e.target.value)
               }
               title="Copy this storyboard to another project"
-              className="bg-panel2 border border-line rounded px-1.5 py-1 text-[10px] font-mono text-muted outline-none focus:border-accent/60"
+              className="bg-panel2 border border-line rounded-md px-2 min-h-8 text-xs text-muted outline-none focus:border-accent/60"
             >
-              <option value="">copy to…</option>
+              <option value="">Copy to…</option>
               {projects
                 .filter((p) => p.id !== projectId)
                 .map((p) => (
@@ -376,8 +396,8 @@ export default function DirectorPanel({
               )}
             </select>
             {current.estimate !== null && (
-              <span className="ml-auto font-mono text-[11px] text-muted">
-                est. cost{" "}
+              <span className="ml-auto text-2xs text-muted">
+                Est. cost{" "}
                 <span
                   className="text-accent"
                   title="Estimate based on rates in src/lib/pricing.ts · shown in SGD @ 1.3 USD"
@@ -387,7 +407,7 @@ export default function DirectorPanel({
               </span>
             )}
           </div>
-          <pre className="whitespace-pre-wrap font-mono text-[12.5px] leading-relaxed text-ink/90 bg-panel2/50 border border-line rounded p-4 max-h-[60vh] overflow-y-auto">
+          <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-ink/90 bg-panel2/50 border border-line rounded-md p-4 max-h-[60vh] overflow-y-auto">
             {current.script}
           </pre>
         </Panel>
@@ -426,7 +446,7 @@ export default function DirectorPanel({
               : "What happens? Type @ to mention a character (adds them to the cast). e.g. '@Kara investigates the noise…'"
           }
         />
-        <div className="mt-1.5 flex justify-between gap-2 text-[11px] font-mono text-muted">
+        <div className="mt-1.5 flex justify-between gap-2 text-2xs text-muted">
           <span className="truncate">
             {amending ? (
               <>
@@ -480,7 +500,7 @@ export default function DirectorPanel({
             value={extraCast}
             onChange={(e) => setExtraCast(e.target.value)}
             placeholder="…or type extra names (comma separated): the janitor, the voice on the radio…"
-            className="w-full bg-panel2 border border-line rounded px-3 py-2 text-sm text-ink placeholder:text-muted/50 outline-none focus:border-accent/60 transition-colors"
+            className="w-full bg-panel2 border border-line rounded-md px-3 py-2 text-sm text-ink placeholder:text-muted/50 outline-none focus:border-accent/60 transition-colors"
           />
         </div>
       </Panel>
@@ -499,12 +519,13 @@ export default function DirectorPanel({
         <Btn
           onClick={generate}
           disabled={!premise.trim()}
-          className="mt-4 w-full py-3 font-display tracking-[0.2em] uppercase"
+          size="lg"
+          className="mt-4 w-full"
         >
           {amending ? "✦ Apply amendment" : "Generate storyboard"}
         </Btn>
         {busy && (
-          <p className="mt-2 text-[10px] font-mono text-muted">
+          <p className="mt-2 text-xs text-muted">
             {amending
               ? "director revising…"
               : "director writing… you can start another take"}

@@ -146,23 +146,21 @@ export default function ProjectsLanding() {
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-line bg-panel/70 backdrop-blur sticky top-0 z-20">
         <div className="px-4 sm:px-6 py-3 flex items-baseline gap-2.5">
-          <span className="font-display font-bold text-xl tracking-[0.08em] text-ink">
-            GEN<span className="text-accent">FORGE</span>
+          <span className="font-semibold text-xl tracking-[0.08em] text-ink">
+            GENFORGE
           </span>
-          <span className="text-[11px] font-mono text-muted">
-            projects · pick a folder to open the studio
-          </span>
+          <span className="text-sm text-muted">Pick a project to open the studio</span>
         </div>
       </header>
 
       <main className="flex-1 w-full max-w-5xl mx-auto px-4 sm:px-6 py-8">
         {error && (
-          <p className="mb-4 text-xs font-mono text-danger border border-danger/40 bg-danger/5 rounded px-3 py-2">
+          <p className="mb-4 text-xs font-mono text-danger border border-danger/40 bg-danger/5 rounded-md px-3 py-2">
             {error}
           </p>
         )}
         {!loaded && !error && (
-          <p className="text-sm text-muted font-mono py-10 text-center">
+          <p className="text-sm text-muted py-10 text-center">
             loading projects…
           </p>
         )}
@@ -196,17 +194,17 @@ export default function ProjectsLanding() {
                           if (e.key === "Enter") void rename(p.id);
                           if (e.key === "Escape") setRenamingId(null);
                         }}
-                        className="w-full bg-panel2 border border-accent/60 rounded px-2 py-1 text-sm text-ink outline-none"
+                        className="w-full bg-panel2 border border-accent/60 rounded-md px-2 py-1 text-sm text-ink outline-none"
                       />
                     ) : (
-                      <h2 className="font-display font-semibold text-[15px] text-ink truncate">
+                      <h2 className="font-semibold text-base text-ink truncate">
                         {p.name}
                       </h2>
                     )}
-                    <p className="text-[11px] font-mono text-muted mt-1 truncate">
+                    <p className="text-2xs text-muted mt-1 truncate">
                       {countLine(p.counts)}
                     </p>
-                    <p className="text-[10px] font-mono text-muted/70 mt-0.5">
+                    <p className="text-2xs text-muted/70 mt-0.5">
                       updated {timeAgo(p.updatedAt)}
                     </p>
                   </div>
@@ -221,7 +219,7 @@ export default function ProjectsLanding() {
                       setRenamingId(p.id);
                       setRenameValue(p.name);
                     }}
-                    className="w-6 h-6 rounded bg-black/70 text-muted hover:text-ink text-xs"
+                    className="w-6 h-6 rounded-md bg-black/70 text-muted hover:text-ink text-xs"
                   >
                     ✎
                   </button>
@@ -233,7 +231,7 @@ export default function ProjectsLanding() {
                       e.stopPropagation();
                       void remove(p);
                     }}
-                    className="w-6 h-6 rounded bg-black/70 text-muted hover:text-danger text-xs"
+                    className="w-6 h-6 rounded-md bg-black/70 text-muted hover:text-danger text-xs"
                   >
                     ✕
                   </button>
@@ -254,13 +252,13 @@ export default function ProjectsLanding() {
                 <div className="flex items-start gap-3">
                   <FolderIcon className="w-9 h-9 text-muted shrink-0 mt-0.5" />
                   <div className="min-w-0">
-                    <h2 className="font-display font-semibold text-[15px] text-muted">
+                    <h2 className="font-semibold text-base text-muted">
                       Unassigned
                     </h2>
-                    <p className="text-[11px] font-mono text-muted mt-1 truncate">
+                    <p className="text-2xs text-muted mt-1 truncate">
                       {countLine(unassigned)}
                     </p>
-                    <p className="text-[10px] font-mono text-muted/70 mt-0.5">
+                    <p className="text-2xs text-muted/70 mt-0.5">
                       not tagged to any project
                     </p>
                   </div>
@@ -283,14 +281,14 @@ export default function ProjectsLanding() {
                   }}
                   placeholder="Project name…"
                   maxLength={80}
-                  className="w-full bg-panel2 border border-line rounded px-2 py-1.5 text-sm text-ink outline-none focus:border-accent/60"
+                  className="w-full bg-panel2 border border-line rounded-md px-2 py-1.5 text-sm text-ink outline-none focus:border-accent/60"
                 />
                 <div className="flex gap-2 mt-3">
                   <button
                     type="button"
                     onClick={() => void create()}
                     disabled={busy || !newName.trim()}
-                    className="px-3 py-1.5 rounded text-[11px] font-mono uppercase tracking-[0.12em] bg-accent text-[#10130c] disabled:opacity-40"
+                    className="px-4 min-h-9 rounded-md text-xs font-semibold bg-accent text-accent-ink hover:brightness-110 disabled:opacity-40 transition-colors"
                   >
                     create & open
                   </button>
@@ -300,7 +298,7 @@ export default function ProjectsLanding() {
                       setCreating(false);
                       setNewName("");
                     }}
-                    className="px-3 py-1.5 rounded text-[11px] font-mono uppercase tracking-[0.12em] border border-line text-muted hover:text-ink"
+                    className="px-4 min-h-9 rounded-md text-xs border border-line text-muted hover:text-ink hover:border-muted/60 transition-colors"
                   >
                     cancel
                   </button>
@@ -310,7 +308,7 @@ export default function ProjectsLanding() {
               <button
                 type="button"
                 onClick={() => setCreating(true)}
-                className="border border-dashed border-line rounded-md p-4 text-muted hover:text-accent hover:border-accent/60 transition-colors flex items-center justify-center gap-2 min-h-[104px] font-mono text-sm uppercase tracking-[0.14em]"
+                className="border border-dashed border-line rounded-md p-4 text-muted hover:text-accent hover:border-accent/60 transition-colors flex items-center justify-center gap-2 min-h-[104px] font-mono text-sm"
               >
                 ＋ new project
               </button>
@@ -320,7 +318,7 @@ export default function ProjectsLanding() {
       </main>
 
       <footer className="border-t border-line px-4 sm:px-6 py-3">
-        <p className="text-[10px] font-mono text-muted">
+        <p className="text-2xs text-muted">
           each project keeps its own assets, storyboards, characters and
           uploads · deleting a project never deletes its files
         </p>

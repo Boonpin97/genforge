@@ -394,6 +394,23 @@ export default function MentionTextArea({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mediaSignature]);
 
+  const charSignature = chipCharacters
+    ? characters.map((c) => `${c.id}:${c.name}`).join("|")
+    : "";
+  const charSigRef = useRef(charSignature);
+  useEffect(() => {
+    if (charSigRef.current === charSignature) return;
+    charSigRef.current = charSignature;
+    const root = ref.current;
+    if (!root || composing.current) return;
+    const focused = document.activeElement === root;
+    const s = readScan();
+    if (!s) return;
+    renderText(s.text);
+    if (focused && s.caret >= 0) setCaret(s.caret);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [charSignature]);
+
   function readScan(): Scan | null {
     const root = ref.current;
     if (!root) return null;
@@ -763,7 +780,7 @@ export default function MentionTextArea({
             commit();
           }
         }}
-        className="w-full bg-panel2 border border-line rounded px-3 py-2 text-sm leading-5 text-ink outline-none focus:border-accent/60 transition-colors whitespace-pre-wrap break-words overflow-y-auto"
+        className="w-full bg-panel2 border border-line rounded-md px-3 py-2 text-sm leading-5 text-ink outline-none focus:border-accent/60 transition-colors whitespace-pre-wrap break-words overflow-y-auto"
         style={{
           minHeight: rows * 20 + 18,
           maxHeight: rows * 45 + 18,
@@ -776,7 +793,7 @@ export default function MentionTextArea({
       )}
       {menu && items.length > 0 && (
         <div className="absolute left-0 right-0 top-full mt-1 z-30 border border-line bg-panel rounded-md shadow-xl shadow-black/50 overflow-hidden">
-          <p className="px-3 pt-2 pb-1 text-[10px] font-mono uppercase tracking-[0.14em] text-muted">
+          <p className="px-3 pt-2.5 pb-1.5 text-2xs font-medium text-muted">
             references · click or ↑↓←→ Enter
           </p>
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 p-2 max-h-80 overflow-y-auto">
@@ -793,7 +810,7 @@ export default function MentionTextArea({
                     : "border-line hover:border-muted/60 hover:bg-panel2"
                 }`}
               >
-                <span className="w-full aspect-video rounded overflow-hidden bg-black/50 flex items-center justify-center">
+                <span className="w-full aspect-video rounded-md overflow-hidden bg-black/50 flex items-center justify-center">
                   {item.kind === "media" ? (
                     makeThumbNode(item.thumb, true)
                   ) : (
@@ -801,14 +818,14 @@ export default function MentionTextArea({
                   )}
                 </span>
                 <span
-                  className={`text-[10px] font-mono truncate text-center w-full ${
+                  className={`text-2xs truncate text-center w-full ${
                     item.kind === "character" ? "text-warn" : "text-accent"
                   }`}
                 >
                   {item.kind === "media" ? item.token : `@${item.label}`}
                 </span>
                 {item.sub && (
-                  <span className="text-[9px] leading-tight text-muted text-center w-full line-clamp-2">
+                  <span className="text-2xs leading-tight text-muted text-center w-full line-clamp-2">
                     {item.sub}
                   </span>
                 )}

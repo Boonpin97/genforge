@@ -1,9 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState, type DragEvent } from "react";
-import { Btn, ErrorBox, StatusBadge, fmtElapsed } from "./ui";
-import { prefetchFile, revealInExplorer } from "./asset-file-cache";
+import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { Btn, ErrorBox, StatusBadge, btnClass, fmtElapsed } from "./ui";
+import {
+  copyFileToClipboard,
+  prefetchFile,
+  revealInExplorer,
+} from "./asset-file-cache";
 import { formatSGD } from "@/lib/pricing";
+import { setVideoVolume, subscribePrefs, videoVolume } from "@/lib/notify";
 import type { ImageUsage, TaskRecord, VideoUsage } from "@/lib/types";
 
 const PREVIEWABLE = /^(\/|data:|blob:|https?:)/i;
@@ -42,43 +47,40 @@ function refPreviews(task: TaskRecord): { refs: RefPreview[]; voices: string[] }
   return { refs, voices };
 }
 
-function PromptSources({ task }: { task: TaskRecord }) {
-  const [open, setOpen] = useState(false);
+function promptSources(
+  task: TaskRecord
+): { userPrompt: string; rewrotePrompt: string; usedRewritten: boolean } | null {
   const s = task.settings;
   if (s?.kind !== "video" || !s.rewrotePrompt) return null;
-  const usedRewritten = s.promptTab === "rewritten" || Boolean(task.params?.rewrite);
+  return {
+    userPrompt: s.userPrompt || "",
+    rewrotePrompt: s.rewrotePrompt,
+    usedRewritten: s.promptTab === "rewritten" || Boolean(task.params?.rewrite),
+  };
+}
+
+function PromptBlock({
+  heading,
+  sent,
+  text,
+}: {
+  heading: string;
+  sent: boolean;
+  text: string;
+}) {
   return (
-    <div>
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        className="text-[11px] font-mono text-accent hover:underline"
-      >
-        {open ? "− hide" : "+ prompt sources"} ·{" "}
-        <span className="text-muted">
-          sent: {usedRewritten ? "rewritten" : "prompt"}
-        </span>
-      </button>
-      {open && (
-        <div className="mt-2 space-y-2">
-          <div className="border border-line rounded bg-panel2 px-2.5 py-2">
-            <p className="text-[9px] uppercase tracking-[0.14em] text-muted mb-1">
-              original{!usedRewritten ? " · sent" : ""}
-            </p>
-            <p className="text-[11px] font-mono text-ink/80 whitespace-pre-wrap line-clamp-6">
-              {s.userPrompt || "—"}
-            </p>
-          </div>
-          <div className="border border-line rounded bg-panel2 px-2.5 py-2">
-            <p className="text-[9px] uppercase tracking-[0.14em] text-muted mb-1">
-              rewritten{usedRewritten ? " · sent" : ""}
-            </p>
-            <p className="text-[11px] font-mono text-ink/80 whitespace-pre-wrap line-clamp-6">
-              {s.rewrotePrompt}
-            </p>
-          </div>
-        </div>
-      )}
+    <div className="border border-line rounded-md bg-panel2 px-3 py-2.5">
+      <p className="text-2xs text-muted mb-1.5 flex items-center gap-2">
+        {heading}
+        {sent && (
+          <span className="text-2xs font-medium text-accent bg-accent/15 rounded-full px-2 py-0.5">
+            sent to the model
+          </span>
+        )}
+      </p>
+      <p className="text-xs text-ink/85 whitespace-pre-wrap break-words leading-relaxed">
+        {text || "—"}
+      </p>
     </div>
   );
 }
@@ -90,14 +92,28 @@ function timeAgo(ts: number): string {
   return `${Math.floor(s / 3600)}h ago`;
 }
 
-function dragOut(url: string, isVid: boolean, id: string) {
+function dragOut(
+  url: string,
+  isVid: boolean,
+  id: string,
+  guardBottomPx = 0
+) {
   const abs = /^https?:/i.test(url)
     ? url
     : `${window.location.origin}${url}`;
   return {
     draggable: true,
-    title: "Drag out to an Explorer window to save · for Clipchamp use 📋 copy file, then Ctrl+V",
+    title: isVid
+      ? "Drag the picture out to an Explorer window to save · use Copy file for Clipchamp"
+      : "Drag out to an Explorer window to save · for Clipchamp use 📋 copy file, then Ctrl+V",
     onDragStart: (e: DragEvent) => {
+      if (guardBottomPx > 0) {
+        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+        if (e.clientY > rect.bottom - guardBottomPx) {
+          e.preventDefault();
+          return;
+        }
+      }
       e.dataTransfer.setData(
         "DownloadURL",
         `${isVid ? "video/mp4" : "image/png"}:genforge-${id.slice(0, 8)}.${isVid ? "mp4" : "png"}:${abs}`
@@ -123,11 +139,48 @@ type FrameCbVideo = HTMLVideoElement & {
   cancelVideoFrameCallback?: (handle: number) => void;
 };
 
-function VideoPlayer({ task, url }: { task: TaskRecord; url: string }) {
+const CONTROL_BAR_PX = 56;
+
+function VideoPlayer({
+  task,
+  url,
+  projectId,
+  onUploaded,
+  extraActions,
+}: {
+  task: TaskRecord;
+  url: string;
+  projectId?: string | null;
+  onUploaded?: () => void;
+  extraActions?: ReactNode;
+}) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const tcRef = useRef<HTMLSpanElement | null>(null);
   const durRef = useRef<HTMLSpanElement | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [volume, setVolume] = useState(1);
+  const [savingFrame, setSavingFrame] = useState(false);
+  const [copying, setCopying] = useState(false);
+
+  useEffect(() => {
+    const read = () => setVolume(videoVolume());
+    const raf = requestAnimationFrame(read);
+    const off = subscribePrefs(read);
+    return () => {
+      cancelAnimationFrame(raf);
+      off();
+    };
+  }, []);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (v) v.volume = volume;
+  }, [volume, url]);
+
+  function changeVolume(next: number) {
+    setVolume(next);
+    setVideoVolume(next);
+  }
 
   useEffect(() => {
     const v = videoRef.current as FrameCbVideo | null;
@@ -184,14 +237,32 @@ function VideoPlayer({ task, url }: { task: TaskRecord; url: string }) {
     window.setTimeout(() => setNote(null), ms);
   }
 
-  function grabFrame() {
+  async function copyFile() {
+    if (!task.assetId || copying) return;
+    setCopying(true);
+    try {
+      const r = await copyFileToClipboard(task.assetId);
+      flash(
+        r.ok
+          ? `Copied ${r.filename || "the video"} to the clipboard — paste it with Ctrl+V`
+          : r.message || "Could not copy the file to the clipboard",
+        r.ok ? 5000 : 6000
+      );
+    } finally {
+      setCopying(false);
+    }
+  }
+
+  function captureFrame():
+    | { blob: Promise<Blob | null>; name: string; w: number; h: number }
+    | null {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v) return null;
     const w = v.videoWidth;
     const h = v.videoHeight;
     if (!w || !h) {
-      flash("frame not ready yet — let the video load first");
-      return;
+      flash("Frame not ready yet — let the video load first");
+      return null;
     }
     try {
       const canvas = document.createElement("canvas");
@@ -201,28 +272,76 @@ function VideoPlayer({ task, url }: { task: TaskRecord; url: string }) {
       if (!ctx) throw new Error("no 2d context");
       ctx.drawImage(v, 0, 0, w, h);
       const tc = timecode(v.currentTime).replace(":", "-");
-      canvas.toBlob((blob) => {
-        if (!blob) {
-          flash("could not encode this frame");
-          return;
-        }
-        const href = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = href;
-        a.download = `frame-${tc}-${task.id.slice(0, 8)}.png`;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        window.setTimeout(() => URL.revokeObjectURL(href), 15000);
-        flash(`saved frame-${tc} (${w}×${h}) to your downloads`, 5000);
-      }, "image/png");
+      return {
+        blob: new Promise<Blob | null>((resolve) =>
+          canvas.toBlob(resolve, "image/png")
+        ),
+        name: `frame-${tc}-${task.id.slice(0, 8)}.png`,
+        w,
+        h,
+      };
     } catch {
       flash(
         task.assetId
-          ? "this frame could not be read from the video"
-          : "frame grab needs the saved copy — it works once the asset is stored locally",
+          ? "This frame could not be read from the video"
+          : "Frame grab needs the saved copy — it works once the asset is stored locally",
         6000
       );
+      return null;
+    }
+  }
+
+  async function grabFrame() {
+    const shot = captureFrame();
+    if (!shot) return;
+    const blob = await shot.blob;
+    if (!blob) {
+      flash("Could not encode this frame");
+      return;
+    }
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = shot.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(href), 15000);
+    flash(`Saved ${shot.name} (${shot.w}×${shot.h}) to your downloads`, 5000);
+  }
+
+  async function frameToUploads() {
+    if (savingFrame) return;
+    const shot = captureFrame();
+    if (!shot) return;
+    setSavingFrame(true);
+    try {
+      const blob = await shot.blob;
+      if (!blob) {
+        flash("Could not encode this frame");
+        return;
+      }
+      const form = new FormData();
+      form.append(
+        "files",
+        new File([blob], shot.name, { type: "image/png" })
+      );
+      form.append("projectId", projectId || "");
+      const res = await fetch("/api/uploads", { method: "POST", body: form });
+      const data = await res.json().catch(() => null);
+      if (!res.ok) {
+        flash(data?.message || `Could not save the frame (HTTP ${res.status})`, 6000);
+        return;
+      }
+      onUploaded?.();
+      flash(
+        `Added ${shot.name} (${shot.w}×${shot.h}) to Uploaded — drop it into any reference zone`,
+        6000
+      );
+    } catch (e) {
+      flash(e instanceof Error ? e.message : "Could not save the frame", 6000);
+    } finally {
+      setSavingFrame(false);
     }
   }
 
@@ -234,12 +353,12 @@ function VideoPlayer({ task, url }: { task: TaskRecord; url: string }) {
         controls
         playsInline
         preload="metadata"
-        {...dragOut(url, true, task.id)}
-        className="w-full rounded border border-line bg-black max-h-[480px]"
+        {...dragOut(url, true, task.id, CONTROL_BAR_PX)}
+        className="w-full rounded-md border border-line bg-black max-h-[480px]"
       />
-      <div className="mt-2 flex flex-wrap gap-3 items-center">
+      <div className="mt-2.5 flex flex-wrap gap-2 items-center">
         <span
-          className="font-mono text-xs text-muted"
+          className="font-mono text-xs text-muted px-1"
           title="Current position · seconds:hundredths"
         >
           <span ref={tcRef} className="text-accent">
@@ -248,36 +367,88 @@ function VideoPlayer({ task, url }: { task: TaskRecord; url: string }) {
           <span> / </span>
           <span ref={durRef}>--</span>
         </span>
-        <button
-          type="button"
-          onClick={grabFrame}
-          title="Save the frame showing right now as a PNG"
-          className="text-xs font-mono text-muted hover:text-accent hover:underline"
+        <span
+          className="flex items-center gap-2 min-h-8 px-2.5 border border-line rounded-md"
+          title="Playback volume — remembered for every video"
         >
-          ⧉ grab frame
-        </button>
+          <button
+            type="button"
+            onClick={() => changeVolume(volume > 0 ? 0 : 1)}
+            aria-label={volume > 0 ? "Mute" : "Unmute"}
+            className="text-xs text-muted hover:text-ink leading-none"
+          >
+            {volume === 0 ? "🔇" : volume < 0.5 ? "🔈" : "🔊"}
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={volume}
+            aria-label="Playback volume"
+            onChange={(e) => changeVolume(Number(e.target.value))}
+            className="w-24"
+          />
+          <span className="font-mono text-2xs text-muted tabular-nums w-8">
+            {Math.round(volume * 100)}%
+          </span>
+        </span>
+        <Btn
+          variant="ghost"
+          size="sm"
+          onClick={() => void grabFrame()}
+          title="Download the frame showing right now as a PNG"
+        >
+          Download frame
+        </Btn>
+        <Btn
+          variant="ghost"
+          size="sm"
+          onClick={() => void frameToUploads()}
+          disabled={savingFrame}
+          title="Save the frame showing right now into the Uploaded tab, so you can reuse it as a reference image"
+        >
+          {savingFrame ? "Saving frame…" : "Frame to Uploaded"}
+        </Btn>
         <a
           href={url}
           download
           target="_blank"
           rel="noreferrer"
-          className="text-xs font-mono text-accent hover:underline"
+          title={
+            task.assetId
+              ? "Save this video to your downloads"
+              : "Save this video — the source link expires 24h after generation"
+          }
+          className={btnClass("ghost", "sm")}
         >
-          ⬇ download{task.assetId ? "" : " (link expires in 24h)"}
+          Download video{task.assetId ? "" : " (link expires in 24h)"}
         </a>
         {task.assetId && (
-          <button
-            type="button"
+          <Btn
+            variant="ghost"
+            size="sm"
+            onClick={() => void copyFile()}
+            disabled={copying}
+            title="Copy the file to the clipboard, then paste it into Clipchamp's media bin with Ctrl+V"
+          >
+            {copying ? "Copying…" : "Copy file"}
+          </Btn>
+        )}
+        {task.assetId && (
+          <Btn
+            variant="ghost"
+            size="sm"
             onClick={() => void revealInExplorer(task.assetId!)}
             title="Opens the folder with this video selected"
-            className="text-xs font-mono text-muted hover:text-ink hover:underline"
           >
-            📂 show in Explorer
-          </button>
+            Show in Explorer
+          </Btn>
         )}
+        {extraActions}
       </div>
       {note && (
-        <p className="mt-1.5 text-[11px] font-mono text-accent">{note}</p>
+        <p className="mt-1.5 text-xs text-ink/80">{note}</p>
       )}
     </div>
   );
@@ -314,8 +485,8 @@ function Usage({ task }: { task: TaskRecord }) {
     <dl className="grid grid-cols-2 sm:grid-cols-3 gap-x-4 gap-y-1 mt-3">
       {rows.map(([k, val]) => (
         <div key={k} className="flex justify-between gap-2 border-b border-line/50 py-0.5">
-          <dt className="text-[10px] uppercase tracking-wider text-muted">{k}</dt>
-          <dd className="font-mono text-[11px] text-ink">{val}</dd>
+          <dt className="text-2xs text-muted">{k}</dt>
+          <dd className="font-mono text-2xs text-ink">{val}</dd>
         </div>
       ))}
     </dl>
@@ -325,9 +496,13 @@ function Usage({ task }: { task: TaskRecord }) {
 export default function TaskCard({
   task,
   onReuse,
+  projectId,
+  onUploaded,
 }: {
   task: TaskRecord;
   onReuse?: (task: TaskRecord) => void;
+  projectId?: string | null;
+  onUploaded?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const active = task.status === "queued" || task.status === "running" || task.status === "submitting";
@@ -351,53 +526,80 @@ export default function TaskCard({
     });
   }, [task.videoUrl, task.imageUrls, task.id]);
   const { refs, voices } = refPreviews(task);
+  const sources = promptSources(task);
+  const canExpand = Boolean(sources) || (task.prompt?.length ?? 0) > 140;
+  const reuseBtn =
+    task.settings && onReuse ? (
+      <Btn
+        variant="ghost"
+        size="sm"
+        onClick={() => onReuse(task)}
+        title="Load this task's prompt, references and settings back into the form"
+      >
+        Reuse settings
+      </Btn>
+    ) : null;
 
   return (
     <article className="border border-line bg-panel rounded-md animate-rise overflow-hidden">
       <header className="flex items-center gap-3 px-4 py-2.5 border-b border-line flex-wrap">
         <span
-          className={`font-display font-semibold text-[11px] tracking-[0.18em] uppercase px-1.5 py-0.5 rounded border ${
+          className={`font-medium text-2xs px-2 py-0.5 rounded-full ${
             task.kind === "video"
-              ? "text-accent border-accent/40"
-              : "text-[#7cc7ff] border-[#7cc7ff]/40"
+              ? "text-cat-video bg-cat-video/10"
+              : "text-cat-image bg-cat-image/10"
           }`}
         >
-          {task.kind}
+          {task.kind === "video" ? "Video" : "Image"}
         </span>
         <span className="font-mono text-xs text-ink">{task.model}</span>
         <StatusBadge status={task.status} />
         {task.assetId && (
-          <span className="font-mono text-[10px] text-ok border border-ok/40 rounded px-1.5 py-0.5">
-            SAVED
+          <span className="text-2xs font-medium text-ok bg-ok/10 rounded-full px-2 py-0.5">
+            Saved
           </span>
         )}
-        <span className="ml-auto text-[11px] font-mono text-muted">
+        <span className="ml-auto text-2xs text-muted">
           {timeAgo(task.createdAt)}
         </span>
       </header>
 
       <div className="p-4 space-y-3">
-        <p
-          className={`text-sm text-ink/85 whitespace-pre-wrap ${
-            !expanded ? "line-clamp-2" : ""
-          }`}
-        >
-          {task.prompt || <span className="text-muted italic">no prompt</span>}
-        </p>
-        {task.prompt && task.prompt.length > 140 && (
+        {!(expanded && sources) && (
+          <p
+            className={`text-sm text-ink/85 whitespace-pre-wrap break-words ${
+              !expanded ? "line-clamp-2" : ""
+            }`}
+          >
+            {task.prompt || <span className="text-muted italic">no prompt</span>}
+          </p>
+        )}
+        {expanded && sources && (
+          <div className="space-y-2">
+            <PromptBlock
+              heading="Your prompt"
+              sent={!sources.usedRewritten}
+              text={sources.userPrompt}
+            />
+            <PromptBlock
+              heading="Rewritten prompt"
+              sent={sources.usedRewritten}
+              text={sources.rewrotePrompt}
+            />
+          </div>
+        )}
+        {canExpand && (
           <button
             type="button"
             onClick={() => setExpanded((e) => !e)}
-            className="text-[11px] font-mono text-accent hover:underline"
+            className="text-xs text-accent hover:underline"
           >
-            {expanded ? "− collapse" : "+ expand prompt"}
+            {expanded ? "− collapse prompt" : "+ expand prompt"}
           </button>
         )}
 
-        <PromptSources task={task} />
-
         {task.params && Object.keys(task.params).length > 0 && (
-          <p className="font-mono text-[10px] text-muted flex flex-wrap gap-x-3 gap-y-0.5">
+          <p className="font-mono text-2xs text-muted flex flex-wrap gap-x-3 gap-y-0.5">
             {Object.entries(task.params)
               .filter(([k]) => k !== "rewrite")
               .map(([k, v]) => (
@@ -410,7 +612,7 @@ export default function TaskCard({
 
         {(refs.length > 0 || voices.length > 0) && (
           <div>
-            <p className="text-[10px] uppercase tracking-[0.14em] text-muted mb-1.5">
+            <p className="text-2xs text-muted mb-1.5">
               References
             </p>
             {refs.length > 0 && (
@@ -418,7 +620,7 @@ export default function TaskCard({
                 {refs.map((r, i) => (
                   <div
                     key={i}
-                    className="border border-line rounded overflow-hidden bg-panel2"
+                    className="border border-line rounded-md overflow-hidden bg-panel2"
                     title={r.name}
                   >
                     <div className="aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
@@ -440,12 +642,12 @@ export default function TaskCard({
                           />
                         )
                       ) : (
-                        <span className="text-[9px] font-mono text-muted px-1 truncate">
+                        <span className="text-2xs text-muted px-1 truncate">
                           attached
                         </span>
                       )}
                     </div>
-                    <p className="px-1 py-0.5 text-[9px] font-mono text-muted truncate">
+                    <p className="px-1 py-0.5 text-2xs text-muted truncate">
                       {r.name}
                     </p>
                   </div>
@@ -453,7 +655,7 @@ export default function TaskCard({
               </div>
             )}
             {voices.length > 0 && (
-              <p className="mt-1.5 text-[10px] font-mono text-muted">
+              <p className="mt-1.5 text-2xs text-muted">
                 audio: {voices.join(", ")}
               </p>
             )}
@@ -482,7 +684,15 @@ export default function TaskCard({
           />
         )}
 
-        {task.videoUrl && <VideoPlayer task={task} url={task.videoUrl} />}
+        {task.videoUrl && (
+          <VideoPlayer
+            task={task}
+            url={task.videoUrl}
+            projectId={projectId}
+            onUploaded={onUploaded}
+            extraActions={reuseBtn}
+          />
+        )}
 
         {task.imageUrls && task.imageUrls.length > 0 && (
           <div
@@ -497,14 +707,14 @@ export default function TaskCard({
                   src={url}
                   alt={`Generated ${i + 1}`}
                   {...dragOut(url, false, task.id)}
-                  className="w-full rounded border border-line bg-black/40"
+                  className="w-full rounded-md border border-line bg-black/40"
                 />
                 <a
                   href={url}
                   download
                   target="_blank"
                   rel="noreferrer"
-                  className="absolute bottom-2 right-2 text-[11px] font-mono bg-black/75 text-accent px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute bottom-2 right-2 text-2xs font-mono bg-black/75 text-accent px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
                 >
                   ⬇ save
                 </a>
@@ -513,7 +723,7 @@ export default function TaskCard({
                     type="button"
                     onClick={() => void revealInExplorer(task.assetId!, i)}
                     title="Show in Explorer — drag from there into Clipchamp"
-                    className="absolute bottom-2 right-[70px] text-[11px] font-mono bg-black/75 text-muted hover:text-ink px-2 py-1 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute bottom-2 right-[70px] text-2xs font-mono bg-black/75 text-muted hover:text-ink px-2 py-1 rounded-md opacity-0 group-hover:opacity-100 transition-opacity"
                   >
                     📂
                   </button>
@@ -523,7 +733,7 @@ export default function TaskCard({
           </div>
         )}
         {(task.imageUrls?.length ?? 0) > 0 && !task.assetId && (
-          <p className="text-[10px] font-mono text-muted">
+          <p className="text-2xs font-mono text-muted">
             image links expire in 24h — save promptly
           </p>
         )}
@@ -531,10 +741,10 @@ export default function TaskCard({
         <Usage task={task} />
 
         <footer className="flex items-center justify-between gap-3 pt-1 border-t border-line/50 mt-2">
-          <span className="font-mono text-[10px] text-muted truncate">
+          <span className="font-mono text-2xs text-muted truncate">
             {task.taskId ? `task_id: ${task.taskId}` : task.requestId ? `request_id: ${task.requestId}` : ""}
           </span>
-          <span className="font-mono text-[11px] shrink-0 flex items-center gap-3">
+          <span className="font-mono text-2xs shrink-0 flex items-center gap-3">
             {task.status === "succeeded" ? (
               <>
                 <span className="text-muted">est. cost </span>
@@ -547,11 +757,7 @@ export default function TaskCard({
                 {task.status === "failed" ? "no charge expected" : "cost pending"}
               </span>
             )}
-            {task.settings && onReuse && (
-              <Btn variant="ghost" onClick={() => onReuse(task)}>
-                ↺ reuse settings
-              </Btn>
-            )}
+            {!task.videoUrl && reuseBtn}
           </span>
         </footer>
       </div>

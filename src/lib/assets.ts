@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { archiveDeletedAssets } from "./spend";
 import type { AssetRefMeta, StoredAsset } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "assets");
@@ -327,8 +328,10 @@ export async function setAssetHidden(
 export async function deleteAsset(id: string): Promise<boolean> {
   if (!ID_RE.test(id)) return false;
   const list = await readIndex();
+  const gone = list.filter((a) => a.id === id);
   const next = list.filter((a) => a.id !== id);
   if (next.length === list.length) return false;
+  await archiveDeletedAssets(gone);
   await writeIndex(next);
   await fs.rm(path.join(DATA_DIR, id), { recursive: true, force: true });
   return true;
@@ -336,6 +339,7 @@ export async function deleteAsset(id: string): Promise<boolean> {
 
 export async function clearAssets(): Promise<number> {
   const list = await readIndex();
+  await archiveDeletedAssets(list);
   await writeIndex([]);
   await fs.rm(DATA_DIR, { recursive: true, force: true });
   return list.length;

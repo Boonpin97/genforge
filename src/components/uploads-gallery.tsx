@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { AddTile, ASSET_DND, formatBytes } from "./drop-zone";
+import { RelocateSelect } from "./ui";
 import type { UploadRecord } from "@/lib/types";
 
 function timeAgo(ts: number): string {
@@ -71,15 +72,24 @@ export default function UploadsGallery({
       .catch(() => {});
   }, []);
 
-  async function moveUpload(id: string, target: string) {
+  async function relocateUpload(
+    id: string,
+    action: "move" | "copy",
+    target: string
+  ) {
     const res = await fetch(`/api/uploads/${id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        action,
         projectId: target === "none" ? null : target,
       }),
     });
-    if (res.ok) await refresh();
+    if (!res.ok) {
+      setNotice(`Could not ${action} this file`);
+      return;
+    }
+    await refresh();
   }
 
   async function addFiles(files: File[]) {
@@ -124,12 +134,12 @@ export default function UploadsGallery({
   return (
     <div className="flex flex-col gap-3">
       {notice && (
-        <p className="text-xs font-mono text-warn" role="alert">
+        <p className="text-xs text-warn" role="alert">
           ⚠ {notice}
         </p>
       )}
       {uploading && (
-        <p className="text-xs font-mono text-muted">saving files…</p>
+        <p className="text-xs text-muted">Saving files…</p>
       )}
       <div
         className="grid gap-3"
@@ -184,10 +194,10 @@ export default function UploadsGallery({
               )}
             </div>
             <div className="px-2 py-1.5 space-y-0.5">
-              <p className="text-[10px] font-mono text-ink/80 truncate" title={u.name}>
+              <p className="text-2xs text-ink/80 truncate" title={u.name}>
                 {u.name}
               </p>
-              <p className="text-[10px] font-mono text-muted flex justify-between gap-2">
+              <p className="text-2xs font-mono text-muted flex justify-between gap-2">
                 <span>
                   {u.kind} · {formatBytes(u.size)}
                 </span>
@@ -198,28 +208,19 @@ export default function UploadsGallery({
               type="button"
               aria-label={`Delete ${u.name}`}
               onClick={() => remove(u)}
-              className="absolute top-1 right-1 w-5 h-5 rounded bg-black/70 text-muted hover:text-danger text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+              className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/65 backdrop-blur-sm text-white/75 hover:text-danger hover:bg-black/80 text-xs leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
             >
               ✕
             </button>
-            <select
-              value=""
-              onChange={(e) =>
-                e.target.value && void moveUpload(u.id, e.target.value)
+            <RelocateSelect
+              projects={projects}
+              currentProjectId={projectId}
+              label="Move or copy this file to another project"
+              onPick={(action, target) =>
+                void relocateUpload(u.id, action, target)
               }
-              title="Move to another project"
-              className="absolute top-1 right-7 bg-black/70 border border-line rounded text-[9px] font-mono text-muted outline-none opacity-0 group-hover:opacity-100 transition-opacity"
-            >
-              <option value="">move…</option>
-              {projects
-                .filter((p) => p.id !== projectId)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              {projectId !== null && <option value="none">Unassigned</option>}
-            </select>
+              className="absolute top-1.5 right-9 bg-black/65 backdrop-blur-sm text-white/75 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
+            />
           </div>
         ))}
         <AddTile
@@ -230,10 +231,10 @@ export default function UploadsGallery({
         />
       </div>
       {!loaded && (
-        <p className="text-xs font-mono text-muted">loading uploads…</p>
+        <p className="text-xs text-muted">Loading uploads…</p>
       )}
       {loaded && items.length === 0 && (
-        <p className="text-[10px] font-mono text-muted">
+        <p className="text-2xs font-mono text-muted">
           nothing uploaded yet — click + or drop images / audio here
         </p>
       )}

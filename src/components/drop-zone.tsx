@@ -197,7 +197,7 @@ export function AddTile({
         }}
       />
       <span className="text-2xl leading-none">+</span>
-      <span className="text-[10px] font-mono uppercase tracking-[0.12em]">
+      <span className="text-2xs">
         add
       </span>
     </div>
@@ -246,12 +246,11 @@ export default function DropZone({
         if (asset) onAssetDrop?.(asset);
         else if (files.length) onFiles(files);
       }}
-      className={`border border-dashed rounded-md py-3 flex items-center justify-center cursor-pointer transition-all select-none ${
+      className={`border border-dashed rounded-md px-4 py-4 flex items-center justify-center gap-3 cursor-pointer transition-all select-none ${
         dragging
-          ? "border-accent bg-accent/5 scale-[1.01]"
+          ? "border-accent bg-accent/5"
           : "border-line hover:border-muted/60 bg-panel2/40"
       } ${disabled ? "opacity-40 pointer-events-none" : ""}`}
-      title={[title, hint].filter(Boolean).join(" · ")}
     >
       <input
         ref={inputRef}
@@ -266,7 +265,7 @@ export default function DropZone({
         }}
       />
       <div
-        className={`w-9 h-9 rounded border flex items-center justify-center transition-colors ${
+        className={`w-9 h-9 shrink-0 rounded-md border flex items-center justify-center transition-colors ${
           dragging ? "border-accent text-accent" : "border-line text-muted"
         }`}
       >
@@ -274,6 +273,16 @@ export default function DropZone({
           <path d="M12 17V3m0 0l-5 5m5-5l5 5" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M3 15v4a2 2 0 002 2h14a2 2 0 002-2v-4" strokeLinecap="round" />
         </svg>
+      </div>
+      <div className="min-w-0">
+        <p
+          className={`text-xs font-medium transition-colors ${
+            dragging ? "text-accent" : "text-ink/85"
+          }`}
+        >
+          {dragging ? "Drop to add" : title}
+        </p>
+        {hint && <p className="text-2xs text-muted mt-0.5">{hint}</p>}
       </div>
     </div>
   );

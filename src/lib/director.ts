@@ -1,6 +1,6 @@
 import type { Character } from "./types";
 
-export const DIRECTOR_MODEL = process.env.DIRECTOR_MODEL || "qwen3.8-flash";
+export const DIRECTOR_MODEL = process.env.DIRECTOR_MODEL || "qwen3.8-max";
 
 export const DIRECTOR_MODELS = ["qwen3.8-flash", "qwen3.8-max"] as const;
 

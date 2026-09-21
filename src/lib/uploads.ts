@@ -93,6 +93,35 @@ export async function setUploadProject(
   return true;
 }
 
+export async function copyUpload(
+  id: string,
+  projectId: string | null
+): Promise<UploadRecord | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const list = await readIndex();
+  const src = list.find((u) => u.id === id);
+  if (!src) return null;
+  const newId = randomUUID();
+  const ext = path.extname(src.filename);
+  const filename = `${newId}${ext}`;
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  await fs.copyFile(
+    path.join(DATA_DIR, src.filename),
+    path.join(DATA_DIR, filename)
+  );
+  const copy: UploadRecord = {
+    ...src,
+    id: newId,
+    filename,
+    createdAt: Date.now(),
+    projectId,
+  };
+  const fresh = await readIndex();
+  fresh.unshift(copy);
+  await writeIndex(fresh);
+  return copy;
+}
+
 export async function assignAllUploads(projectId: string): Promise<number> {
   const list = await readIndex();
   let n = 0;

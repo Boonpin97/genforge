@@ -9,6 +9,7 @@ import {
   setCharacterProject,
 } from "./characters";
 import { assignAllUploads, listUploads, setUploadProject } from "./uploads";
+import { assignAllPrompts, listPrompts, setPromptProject } from "./prompts";
 import {
   assignAllRuns,
   listDirectorScripts,
@@ -66,6 +67,7 @@ export async function ensureSeed(): Promise<void> {
     assignAllRuns(project.id),
     assignAllCharacters(project.id),
     assignAllUploads(project.id),
+    assignAllPrompts(project.id),
   ]);
 }
 
@@ -74,17 +76,19 @@ export async function listProjects(): Promise<
 > {
   await ensureSeed();
   const list = await readIndex();
-  const [assets, scripts, chars, uploads] = await Promise.all([
+  const [assets, scripts, chars, uploads, prompts] = await Promise.all([
     listAssets(),
     listDirectorScripts(undefined, 100000),
     listCharacters(),
     listUploads(),
+    listPrompts(),
   ]);
   const countFor = (pid: string | null): ProjectCounts => ({
     assets: assets.filter((a) => (a.projectId ?? null) === pid).length,
     scripts: scripts.filter((s) => (s.projectId ?? null) === pid).length,
     characters: chars.filter((c) => (c.projectId ?? null) === pid).length,
     uploads: uploads.filter((u) => (u.projectId ?? null) === pid).length,
+    prompts: prompts.filter((p) => (p.projectId ?? null) === pid).length,
   });
   return list
     .slice()
@@ -93,17 +97,19 @@ export async function listProjects(): Promise<
 }
 
 export async function unassignedCounts(): Promise<ProjectCounts> {
-  const [assets, scripts, chars, uploads] = await Promise.all([
+  const [assets, scripts, chars, uploads, prompts] = await Promise.all([
     listAssets(null),
     listDirectorScripts(null, 100000),
     listCharacters(null),
     listUploads(null),
+    listPrompts(null),
   ]);
   return {
     assets: assets.length,
     scripts: scripts.length,
     characters: chars.length,
     uploads: uploads.length,
+    prompts: prompts.length,
   };
 }
 
@@ -164,6 +170,7 @@ export async function deleteProject(id: string): Promise<boolean> {
     assignAllToNullRuns(id),
     assignAllToNullChars(id),
     assignAllToNullUploads(id),
+    assignAllToNullPrompts(id),
   ]);
   return true;
 }
@@ -194,4 +201,9 @@ async function assignAllToNullChars(id: string) {
 async function assignAllToNullUploads(id: string) {
   const ups = await listUploads(id);
   for (const u of ups) await setUploadProject(u.id, null);
+}
+
+async function assignAllToNullPrompts(id: string) {
+  const list = await listPrompts(id);
+  for (const p of list) await setPromptProject(p.id, null);
 }
