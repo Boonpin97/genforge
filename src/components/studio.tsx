@@ -5,29 +5,21 @@ import Link from "next/link";
 import VideoPanel, { type VideoSubmitPayload } from "./video-panel";
 import ImagePanel, { type ImageSubmitPayload } from "./image-panel";
 import CharactersPanel from "./characters-panel";
+import SettingsMenu from "./settings-menu";
 import DirectorPanel from "./director-panel";
 import AnalyticsPanel from "./analytics-panel";
 import AssetsGallery from "./assets-gallery";
 import UploadsGallery from "./uploads-gallery";
+import PromptsGallery from "./prompts-gallery";
 import { blobToDataUrl } from "./drop-zone";
 import {
   estimateOpenRouterVideoCost,
   formatSGD,
 } from "@/lib/pricing";
-import {
-  alertDone,
-  alertsEnabled,
-  askNotifPermission,
-  notifState,
-  playChime,
-  primeAudio,
-  setAlertsEnabled,
-  type NotifState,
-} from "@/lib/notify";
+import { alertDone } from "@/lib/notify";
 import type {
   ApiError,
   AssetRefMeta,
-  Character,
   ImageSettings,
   MediaPayload,
   StoredAsset,
@@ -161,14 +153,6 @@ export default function Studio({
     "dashscope"
   );
   const [banner, setBanner] = useState<string | null>(null);
-  const [videoInjection, setVideoInjection] = useState<{
-    characters: Character[];
-    nonce: number;
-  } | null>(null);
-  const [imageInjection, setImageInjection] = useState<{
-    characters: Character[];
-    nonce: number;
-  } | null>(null);
   const [videoReuse, setVideoReuse] = useState<{
     settings: VideoSettings;
     nonce: number;
@@ -178,14 +162,21 @@ export default function Studio({
     nonce: number;
   } | null>(null);
   const [split, setSplit] = useState(45);
-  const [assetPane, setAssetPane] = useState<"generated" | "uploaded">(
-    "generated"
-  );
+  const [assetPane, setAssetPane] = useState<
+    "generated" | "uploaded" | "prompts"
+  >("generated");
   const [directorSlot, setDirectorSlot] = useState<HTMLDivElement | null>(null);
   const [uploadsNonce, setUploadsNonce] = useState(0);
+  const [promptsNonce, setPromptsNonce] = useState(0);
+  const [videoPrompt, setVideoPrompt] = useState<{
+    text: string;
+    nonce: number;
+  } | null>(null);
+  const [imagePrompt, setImagePrompt] = useState<{
+    text: string;
+    nonce: number;
+  } | null>(null);
   const [pasteNote, setPasteNote] = useState<string | null>(null);
-  const [alertsOn, setAlertsOn] = useState(false);
-  const [notifPerm, setNotifPerm] = useState<NotifState>("default");
   const mainRef = useRef<HTMLDivElement | null>(null);
   const draggingRef = useRef(false);
   const alertedRef = useRef<Set<string>>(new Set());
@@ -194,14 +185,6 @@ export default function Studio({
     const raf = requestAnimationFrame(() => {
       const v = Number(localStorage.getItem("genforge.split"));
       if (v >= 25 && v <= 78) setSplit(v);
-    });
-    return () => cancelAnimationFrame(raf);
-  }, []);
-
-  useEffect(() => {
-    const raf = requestAnimationFrame(() => {
-      setAlertsOn(alertsEnabled());
-      setNotifPerm(notifState());
     });
     return () => cancelAnimationFrame(raf);
   }, []);
@@ -259,15 +242,6 @@ export default function Studio({
     return () => window.removeEventListener("paste", onPaste);
   }, [projectId]);
 
-  const toggleAlerts = useCallback(async () => {
-    const next = !alertsEnabled();
-    setAlertsEnabled(next);
-    setAlertsOn(next);
-    if (!next) return;
-    primeAudio();
-    playChime(true);
-    setNotifPerm(await askNotifPermission());
-  }, []);
   useEffect(() => {
     try {
       localStorage.setItem("genforge.split", String(Math.round(split)));
@@ -368,23 +342,38 @@ export default function Studio({
     setBanner("Settings reused — review prompt and references, then generate again");
   }, []);
 
-  const attachCharacter = useCallback((target: "video" | "image", character: Character) => {
+  const usePrompt = useCallback((target: "video" | "image", text: string) => {
     const nonce = ++attachNonce;
     if (target === "video") {
-      setVideoInjection((prev) => ({
-        characters: [...(prev?.characters ?? []), character],
-        nonce,
-      }));
+      setVideoPrompt({ text, nonce });
       setTab("video");
     } else {
-      setImageInjection((prev) => ({
-        characters: [...(prev?.characters ?? []), character],
-        nonce,
-      }));
+      setImagePrompt({ text, nonce });
       setTab("image");
     }
-    setBanner(`Character "${character.name}" references attached — description is added when you generate`);
+    setBanner("Saved prompt loaded — edit it or generate as is");
   }, []);
+
+  const savePrompt = useCallback(
+    async (kind: "video" | "image", text: string): Promise<boolean> => {
+      const body = text.trim();
+      if (!body) return false;
+      try {
+        const res = await fetch("/api/prompts", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ text: body, kind, projectId }),
+        });
+        if (!res.ok) return false;
+        setPromptsNonce((n) => n + 1);
+        setAssetPane("prompts");
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    [projectId]
+  );
 
   const tasksRef = useRef(tasks);
   useEffect(() => {
@@ -608,6 +597,7 @@ export default function Studio({
         ) {
           alertedRef.current.add(task.id);
           alertDone({
+            channel: "video",
             ok: patch.status === "succeeded",
             title:
               patch.status === "succeeded" ? "Video ready" : "Video failed",
@@ -883,6 +873,7 @@ export default function Studio({
         const good = oks.filter(Boolean).length;
         const many = oks.length > 1;
         alertDone({
+          channel: "image",
           ok: good > 0,
           title:
             good === oks.length
@@ -942,31 +933,37 @@ export default function Studio({
 
   return (
     <div className="flex-1 flex flex-col min-h-screen">
-      <header className="border-b border-line bg-panel/70 backdrop-blur sticky top-0 z-20">
-        <div className="px-4 sm:px-6 py-3 flex items-center gap-4 flex-wrap">
-          <div className="flex items-baseline gap-2.5">
-            <span className="font-display font-bold text-xl tracking-[0.08em] text-ink">
-              GEN<span className="text-accent">FORGE</span>
-            </span>
+      <header className="border-b border-line bg-panel/80 backdrop-blur sticky top-0 z-20">
+        <div className="px-4 sm:px-6 py-2.5 flex items-center gap-3 flex-wrap">
+          <div className="flex items-center gap-3 min-w-0">
             <Link
               href="/"
               title="Back to projects"
-              className="text-[11px] font-mono text-muted hover:text-accent transition-colors"
+              className="inline-flex items-center justify-center w-8 h-8 shrink-0 -ml-1 rounded-md text-muted hover:text-ink hover:bg-panel2 transition-colors"
+              aria-label="Back to projects"
             >
-              ← projects
+              ←
             </Link>
-            <span className="hidden sm:flex items-center gap-1.5 text-[11px] font-mono text-accent border border-accent/40 rounded px-1.5 py-0.5 max-w-[220px]">
-              <span className="truncate" title={projectName || "project"}>
-                {projectName || (projectId === null ? "Unassigned" : projectId)}
-              </span>
+            <span className="font-semibold text-lg tracking-[0.08em] text-ink shrink-0">
+              GENFORGE
             </span>
-            <span className="hidden md:block text-[11px] font-mono text-muted">
-              alibaba model studio · wan3.0 + qwen-image-3.0
+            <span className="hidden sm:block w-px h-5 bg-line shrink-0" />
+            <span
+              className="hidden sm:block text-sm text-muted truncate max-w-[220px]"
+              title={projectName || "project"}
+            >
+              {projectName || (projectId === null ? "Unassigned" : projectId)}
             </span>
           </div>
-          <div className="ml-auto flex items-center gap-4 font-mono text-xs">
+          <div className="ml-auto flex items-center gap-2 text-xs">
+            {activeCount > 0 && (
+              <span className="flex items-center gap-2 text-warn bg-warn/10 rounded-full pl-2.5 pr-3 h-8">
+                <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse-dot" />
+                {activeCount} running
+              </span>
+            )}
             <span
-              className="flex items-center gap-1.5"
+              className="flex items-center gap-2 text-muted h-8 px-1"
               title={
                 configured === false
                   ? "DASHSCOPE_API_KEY missing in .env.local"
@@ -974,7 +971,7 @@ export default function Studio({
               }
             >
               <span
-                className={`w-2 h-2 rounded-full ${
+                className={`w-1.5 h-1.5 rounded-full ${
                   configured === null
                     ? "bg-muted"
                     : configured
@@ -982,46 +979,21 @@ export default function Studio({
                       : "bg-danger"
                 }`}
               />
-              <span className="text-muted">
-                {configured === null ? "checking…" : configured ? "key ok" : "no api key"}
+              <span className="hidden md:inline">
+                {configured === null
+                  ? "Checking key"
+                  : configured
+                    ? "Key ready"
+                    : "No API key"}
               </span>
             </span>
-            {activeCount > 0 && (
-              <span className="text-warn">
-                <span className="animate-pulse-dot inline-block">●</span> {activeCount} active
-              </span>
-            )}
-            <button
-              type="button"
-              onClick={() => void toggleAlerts()}
-              aria-pressed={alertsOn}
-              title={
-                !alertsOn
-                  ? "Play a chime and show a desktop notification when a generation finishes while this window is not focused"
-                  : notifPerm === "granted"
-                    ? "Alerts on — chime + desktop notification when a generation finishes while this window is not focused"
-                    : notifPerm === "denied"
-                      ? "Alerts on (sound + tab title only) — desktop notifications are blocked for this site in your browser settings"
-                      : notifPerm === "unsupported"
-                        ? "Alerts on (sound + tab title only) — this browser has no Notification API"
-                        : "Alerts on (sound + tab title only) — allow notifications to also get a desktop popup"
-              }
-              className={`flex items-center gap-1.5 transition-colors ${
-                alertsOn ? "text-accent" : "text-muted hover:text-ink"
-              }`}
-            >
-              <span aria-hidden>{alertsOn ? "🔔" : "🔕"}</span>
-              <span className="hidden sm:inline">
-                alerts {alertsOn ? "on" : "off"}
-                {alertsOn && notifPerm !== "granted" ? " (sound)" : ""}
-              </span>
-            </button>
-            <span className="text-muted">
-              session est.{" "}
-              <span className="text-accent">
+            <span className="flex items-center gap-1.5 text-muted h-8 px-1">
+              <span className="hidden md:inline">Session</span>
+              <span className="font-mono tabular-nums text-ink">
                 {sessionCost ? formatSGD(sessionCost) : "S$0"}
               </span>
             </span>
+            <SettingsMenu />
           </div>
         </div>
       </header>
@@ -1036,29 +1008,29 @@ export default function Studio({
           style={{ "--split": `${split}%` } as CSSProperties}
         >
           {configured === false && (
-            <div className="border border-danger/40 bg-danger/5 rounded-md p-3 text-sm text-ink">
-              <span className="font-mono text-xs text-danger">MissingConfig</span>
-              <p className="mt-1">
-                Set <code className="font-mono text-accent">DASHSCOPE_API_KEY</code> in{" "}
-                <code className="font-mono">.env.local</code> (copy from{" "}
-                <code className="font-mono">.env.example</code>) and restart{" "}
-                <code className="font-mono">npm run dev</code>.
+            <div className="border border-danger/35 bg-danger/10 rounded-lg p-3.5 text-sm text-ink">
+              <p className="font-semibold text-danger mb-1">No API key found</p>
+              <p className="text-ink/90">
+                Set <code className="font-mono text-xs">DASHSCOPE_API_KEY</code> in{" "}
+                <code className="font-mono text-xs">.env.local</code> (copy{" "}
+                <code className="font-mono text-xs">.env.example</code>), then
+                restart the dev server.
               </p>
             </div>
           )}
           {banner && (
-            <div className="border border-warn/40 bg-warn/5 rounded-md p-3 text-sm text-warn font-mono">
+            <div className="border border-warn/35 bg-warn/10 rounded-lg p-3.5 text-sm text-warn">
               {banner}
             </div>
           )}
 
-          <div className="flex gap-1 border-b border-line">
+          <div className="flex gap-0.5 p-1 rounded-lg border border-line bg-bg">
             {(
               [
-                { id: "video", label: "Video · wan3.0" },
-                { id: "image", label: "Image · qwen-image-3.0" },
+                { id: "video", label: "Video" },
+                { id: "image", label: "Images" },
                 { id: "characters", label: "Characters" },
-                { id: "director", label: "Director · qwen3.8" },
+                { id: "director", label: "Director" },
                 { id: "analytics", label: "Analytics" },
               ] as { id: Tab; label: string }[]
             ).map((t) => (
@@ -1066,10 +1038,11 @@ export default function Studio({
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
-                className={`px-4 py-2.5 text-sm font-display font-semibold tracking-[0.1em] uppercase transition-colors border-b-2 -mb-px ${
+                aria-current={tab === t.id ? "page" : undefined}
+                className={`flex-1 min-h-9 px-3 rounded-md text-sm font-medium transition-colors ${
                   tab === t.id
-                    ? "border-accent text-accent"
-                    : "border-transparent text-muted hover:text-ink"
+                    ? "bg-accent/15 text-accent font-semibold"
+                    : "text-muted hover:text-ink hover:bg-panel2/60"
                 }`}
               >
                 {t.label}
@@ -1080,7 +1053,8 @@ export default function Studio({
           <div className={tab === "video" ? "block" : "hidden"}>
             <VideoPanel
               onSubmit={submitVideo}
-              injection={videoInjection}
+              promptInjection={videoPrompt}
+              onSavePrompt={(text) => savePrompt("video", text)}
               reuse={videoReuse}
               projectId={projectId}
               videoProvider={videoProvider}
@@ -1089,13 +1063,14 @@ export default function Studio({
           <div className={tab === "image" ? "block" : "hidden"}>
             <ImagePanel
               onSubmit={submitImage}
-              injection={imageInjection}
+              promptInjection={imagePrompt}
+              onSavePrompt={(text) => savePrompt("image", text)}
               reuse={imageReuse}
               projectId={projectId}
             />
           </div>
           <div className={tab === "characters" ? "block" : "hidden"}>
-            <CharactersPanel onUse={attachCharacter} projectId={projectId} />
+            <CharactersPanel projectId={projectId} />
           </div>
           <div className={tab === "director" ? "block" : "hidden"}>
             <DirectorPanel
@@ -1125,10 +1100,8 @@ export default function Studio({
         <aside className="min-w-0 flex-1 lg:sticky lg:top-[68px] lg:pl-4">
           {tab === "director" ? (
             <>
-              <div className="flex items-center justify-between mb-3">
-                <h2 className="font-display font-semibold text-[13px] tracking-[0.14em] uppercase text-muted">
-                  Storyboard
-                </h2>
+              <div className="flex items-center justify-between mb-3 min-h-9">
+                <h2 className="font-semibold text-sm text-ink">Storyboard</h2>
               </div>
               <div
                 ref={setDirectorSlot}
@@ -1137,37 +1110,52 @@ export default function Studio({
             </>
           ) : (
             <>
-              <div className="flex items-center gap-1.5 mb-3">
-                {(["generated", "uploaded"] as const).map((p) => (
+              <div className="flex items-center gap-1 mb-3 min-h-9">
+                {(
+                  [
+                    { id: "generated", label: "Generated" },
+                    { id: "uploaded", label: "Uploaded" },
+                    { id: "prompts", label: "Prompts" },
+                  ] as const
+                ).map((p) => (
                   <button
-                    key={p}
+                    key={p.id}
                     type="button"
-                    onClick={() => setAssetPane(p)}
-                    className={`px-2.5 py-1 rounded text-[10px] font-mono uppercase tracking-[0.12em] border transition-colors ${
-                      assetPane === p
-                        ? "border-accent/60 text-accent bg-accent/10"
-                        : "border-line text-muted hover:text-ink"
+                    onClick={() => setAssetPane(p.id)}
+                    aria-pressed={assetPane === p.id}
+                    className={`min-h-8 px-3 rounded-md text-xs font-medium transition-colors ${
+                      assetPane === p.id
+                        ? "bg-panel2 text-accent"
+                        : "text-muted hover:text-ink hover:bg-panel2/60"
                     }`}
                   >
-                    {p}
+                    {p.label}
                   </button>
                 ))}
                 {assetPane === "generated" && gallery.length > 0 && (
                   <button
                     type="button"
                     onClick={clearAll}
-                    className="ml-auto text-[11px] font-mono text-muted hover:text-danger transition-colors"
+                    className="ml-auto min-h-8 px-3 rounded-md text-xs text-muted hover:text-danger hover:bg-danger/10 transition-colors"
                   >
-                    clear all
+                    Clear all
                   </button>
                 )}
               </div>
               {pasteNote && (
-                <p className="mb-2 border border-accent/40 bg-accent/5 rounded px-2.5 py-1.5 text-[11px] font-mono text-accent">
+                <p className="mb-2 border border-line bg-panel2 rounded-md px-3 py-2 text-xs text-ink">
                   {pasteNote}
                 </p>
               )}
-              {assetPane === "uploaded" ? (
+              {assetPane === "prompts" ? (
+                <div className="max-h-[calc(100vh-140px)] overflow-y-auto pr-1 overscroll-contain">
+                  <PromptsGallery
+                    projectId={projectId}
+                    onUse={usePrompt}
+                    reloadNonce={promptsNonce}
+                  />
+                </div>
+              ) : assetPane === "uploaded" ? (
                 <div className="max-h-[calc(100vh-140px)] overflow-y-auto pr-1 overscroll-contain">
                   <UploadsGallery
                     projectId={projectId}
@@ -1175,12 +1163,13 @@ export default function Studio({
                   />
                 </div>
               ) : gallery.length === 0 ? (
-                <div className="border border-dashed border-line rounded-md p-8 text-center">
-                  <p className="text-sm text-muted">
-                    Nothing generated yet.
-                    <br />
-                    Assets are saved to <code className="font-mono">data/assets/</code>{" "}
-                    — click one for prompt, references and cost, or to reuse its
+                <div className="border border-dashed border-line rounded-lg px-6 py-12 text-center">
+                  <p className="text-sm font-medium text-ink mb-1.5">
+                    Nothing generated yet
+                  </p>
+                  <p className="text-xs text-muted max-w-[42ch] mx-auto">
+                    Write a prompt and generate — results land here. Click any
+                    result to see its prompt, references and cost, or to reuse its
                     settings.
                   </p>
                 </div>
@@ -1193,6 +1182,10 @@ export default function Studio({
                     onToggleHidden={toggleHidden}
                     projectId={projectId}
                     onChanged={loadAssets}
+                    onUploaded={() => {
+                      setUploadsNonce((n) => n + 1);
+                      setAssetPane("uploaded");
+                    }}
                   />
                 </div>
               )}
@@ -1202,11 +1195,12 @@ export default function Studio({
         </div>
       </main>
 
-      <footer className="border-t border-line py-3">
-        <p className="px-4 sm:px-6 text-[10px] font-mono text-muted">
-          cost figures are estimates — adjust rates in src/lib/pricing.ts · SGD at
-          fixed 1.3 × USD · result links expire 24h after generation · usage data
-          from DashScope API
+      <footer className="border-t border-line-soft py-4 mt-2">
+        <p className="px-4 sm:px-6 text-2xs text-muted max-w-[90ch]">
+          Cost figures are estimates, converted to SGD at a fixed 1.3 × USD. Adjust
+          the rates in <code className="font-mono">src/lib/pricing.ts</code>. Usage
+          data comes from the DashScope API, and result links expire 24 hours after
+          generation.
         </p>
       </footer>
     </div>

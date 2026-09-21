@@ -11,6 +11,7 @@ import DropZone, {
   trimAudioBlob,
   type AssetDropData,
 } from "./drop-zone";
+import { alertDone } from "@/lib/notify";
 import MentionTextArea, {
   escapeRe,
   type MediaMention,
@@ -27,6 +28,7 @@ import {
 import type {
   Character,
   MediaPayload,
+  RewriteJob,
   VideoSettings,
 } from "@/lib/types";
 import { charAudioUrl, charImgUrl } from "@/lib/types";
@@ -65,13 +67,15 @@ const nextId = () => `m${Date.now()}-${idCounter++}`;
 
 export default function VideoPanel({
   onSubmit,
-  injection,
+  promptInjection,
+  onSavePrompt,
   reuse,
   projectId,
   videoProvider = "dashscope",
 }: {
   onSubmit: (payload: VideoSubmitPayload) => Promise<boolean>;
-  injection: { characters: Character[]; nonce: number } | null;
+  promptInjection?: { text: string; nonce: number } | null;
+  onSavePrompt?: (text: string) => Promise<boolean>;
   reuse: { settings: VideoSettings; nonce: number } | null;
   projectId: string | null;
   videoProvider?: "dashscope" | "qwencloud";
@@ -80,6 +84,7 @@ export default function VideoPanel({
   const [rewrote, setRewrote] = useState("");
   const [promptTab, setPromptTab] = useState<"prompt" | "rewritten">("prompt");
   const [rewriting, setRewriting] = useState(false);
+  const [rewriteJobId, setRewriteJobId] = useState<string | null>(null);
   const [rewriteSig, setRewriteSig] = useState("");
   const [model, setModel] = useState("wan3.0-video");
   const [resolution, setResolution] = useState("480P");
@@ -128,8 +133,115 @@ export default function VideoPanel({
     itemsRef.current = items;
   }, [items]);
 
+  const ackRewriteJob = (id: string) => {
+    void fetch(`/api/rewrite-prompt/${id}/ack`, { method: "POST" }).catch(
+      () => {}
+    );
+  };
 
-  const injectionRef = useRef(0);
+  const settleRewriteJob = (job: RewriteJob, restored: boolean) => {
+    if (job.status === "succeeded") {
+      setRewrote((cur) => (restored && cur.trim() ? cur : job.rewrote || ""));
+      setPromptTab("rewritten");
+      setRewriteSig(job.sig || "");
+      notify(
+        restored
+          ? "Picked up the rewrite that finished while you were away — review it, then generate"
+          : "Rewritten request ready — review it, then generate"
+      );
+      alertDone({
+        channel: "rewrite",
+        ok: true,
+        title: "Rewritten prompt ready",
+        body: (job.rewrote || job.prompt).slice(0, 140),
+        tag: `rewrite-${job.id}`,
+      });
+    } else if (job.status === "failed") {
+      notify(`Rewrite failed: ${job.error || "unknown error"}`);
+      alertDone({
+        channel: "rewrite",
+        ok: false,
+        title: "Rewrite failed",
+        body: job.error || "The rewrite did not finish",
+        tag: `rewrite-${job.id}`,
+      });
+    }
+    setRewriting(false);
+    setRewriteJobId(null);
+    ackRewriteJob(job.id);
+  };
+
+  const settleRef = useRef(settleRewriteJob);
+  useEffect(() => {
+    settleRef.current = settleRewriteJob;
+  });
+
+  useEffect(() => {
+    if (!rewriteJobId) return;
+    let alive = true;
+    let timer = 0;
+    const poll = async () => {
+      try {
+        const res = await fetch(`/api/rewrite-prompt/${rewriteJobId}`);
+        if (!alive) return;
+        if (res.ok) {
+          const job = (await res.json()).job as RewriteJob | null;
+          if (!alive) return;
+          if (job && job.status !== "running") {
+            settleRef.current(job, false);
+            return;
+          }
+        }
+      } catch {}
+      if (alive) timer = window.setTimeout(poll, 2000);
+    };
+    timer = window.setTimeout(poll, 1500);
+    return () => {
+      alive = false;
+      window.clearTimeout(timer);
+    };
+  }, [rewriteJobId]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(
+          `/api/rewrite-prompt?project=${projectId === null ? "none" : projectId}`
+        );
+        if (!res.ok) return;
+        const job = (await res.json()).job as RewriteJob | null;
+        if (cancelled || !job) return;
+        setPrompt((cur) => (cur.trim() ? cur : job.prompt));
+        if (job.status === "running") {
+          setRewriting(true);
+          setRewriteJobId(job.id);
+          setPromptTab("rewritten");
+          notify("A rewrite from before was still running — waiting for it");
+        } else {
+          settleRef.current(job, true);
+        }
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const promptRef = useRef(0);
+  const [promptSaved, setPromptSaved] = useState<"ok" | "err" | null>(null);
+  useEffect(() => {
+    if (!promptInjection || promptInjection.nonce === promptRef.current) return;
+    promptRef.current = promptInjection.nonce;
+    setPrompt(promptInjection.text);
+  }, [promptInjection]);
+
+  async function savePrompt() {
+    if (!onSavePrompt) return;
+    const ok = await onSavePrompt(prompt);
+    setPromptSaved(ok ? "ok" : "err");
+    window.setTimeout(() => setPromptSaved(null), 2500);
+  }
 
   const reuseRef = useRef(0);
   useEffect(() => {
@@ -432,15 +544,6 @@ export default function VideoPanel({
         !itemsRef.current.some((i) => i.characterId === c.id)
     );
   }
-
-  useEffect(() => {
-    if (!injection || injection.nonce === injectionRef.current) return;
-    injectionRef.current = injection.nonce;
-    void (async () => {
-      for (const c of injection.characters) await injectCharacter(c);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [injection]);
 
   function updateItem(id: string, patch: Partial<MediaItem>) {
     setItems((list) => list.map((i) => (i.id === id ? { ...i, ...patch } : i)));
@@ -800,19 +903,23 @@ export default function VideoPanel({
       const res = await fetch("/api/rewrite-prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ prompt: text, inventory, projectId }),
+        body: JSON.stringify({
+          prompt: text,
+          inventory,
+          sig: readySig(list),
+          projectId,
+        }),
       });
       const data = await res.json().catch(() => null);
-      if (!res.ok)
+      if (!res.ok || !data?.job?.id)
         throw new Error(data?.message || `Rewrite failed (HTTP ${res.status})`);
-      setRewrote(String(data.rewrote || ""));
-      setPromptTab("rewritten");
-      setRewriteSig(readySig(list));
-      notify("Rewritten request ready — review it, then generate");
+      setRewriteJobId(String(data.job.id));
+      notify(
+        "Rewriting — this keeps running on the server, so a reload or project switch will not lose it"
+      );
     } catch (e) {
-      notify(`Rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
-    } finally {
       setRewriting(false);
+      notify(`Rewrite failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -1112,12 +1219,31 @@ export default function VideoPanel({
               chipCharacters
               placeholder='Describe the video. Type "@" to reference Image N / Video N / Audio N or a saved character…'
             />
-            <div className="mt-1.5 flex justify-between text-[11px] font-mono text-muted">
+            <div className="mt-2 flex items-center justify-between gap-4 text-2xs text-muted">
               <span>
-                Tip: type <span className="text-accent">@</span> to mention dropped
-                media or characters
+                Type <span className="text-ink font-medium">@</span> to mention
+                dropped media or a saved character
               </span>
-              <span>{prompt.length}/20000</span>
+              <span className="flex items-center gap-3 shrink-0">
+              {onSavePrompt && (
+                <button
+                  type="button"
+                  onClick={() => void savePrompt()}
+                  disabled={!prompt.trim()}
+                  title="Save this prompt to the Prompts tab so you can reuse it later"
+                  className="text-2xs text-muted hover:text-accent disabled:opacity-40 disabled:hover:text-muted transition-colors"
+                >
+                  {promptSaved === "ok"
+                    ? "✓ Saved to Prompts"
+                    : promptSaved === "err"
+                      ? "Could not save"
+                      : "🔖 Save prompt"}
+                </button>
+              )}
+                <span className="font-mono tabular-nums">
+                  {prompt.length}/20000
+                </span>
+              </span>
             </div>
           </>
         ) : (
@@ -1130,7 +1256,7 @@ export default function VideoPanel({
               placeholder="Press ✦ Rewrite to structure your Prompt into a five-section R2V request… this text is sent while the Rewritten tab is active."
               className="w-full bg-panel2 border border-line rounded-md px-3 py-2.5 text-sm font-mono text-ink placeholder:text-muted/50 outline-none focus:border-accent/60 transition-colors resize-y"
             />
-            <div className="mt-1.5 flex justify-between text-[11px] font-mono text-muted">
+            <div className="mt-1.5 flex justify-between text-2xs font-mono text-muted">
               <span>
                 {rewriting
                   ? "structuring with qwen3.8-flash…"
@@ -1141,7 +1267,7 @@ export default function VideoPanel({
             {rewriteSig &&
               readySig(items) !== rewriteSig &&
               !frameMode && (
-                <p className="mt-1.5 text-[11px] font-mono text-warn">
+                <p className="mt-1.5 text-xs text-warn">
                   ⚠ media changed since the rewrite — press ✦ Rewrite again to
                   re-bind Image/Video numbers
                 </p>
@@ -1158,15 +1284,15 @@ export default function VideoPanel({
                 value={genMode}
                 onChange={(v) => setGenMode(v)}
                 options={[
-                  { value: "text", label: "text / reference" },
-                  { value: "frame", label: "first + last frame" },
+                  { value: "text", label: "Text / reference" },
+                  { value: "frame", label: "First + last frame" },
                 ]}
               />
             </Field>
-            <p className="mt-1.5 text-[11px] font-mono text-muted">
+            <p className="mt-1.5 text-xs text-muted">
               {genMode === "frame"
-                ? "frame mode: give a first frame (and optional last frame); the model animates between them"
-                : "text mode: prompt + optional reference images / videos / audio / characters"}
+                ? "Give a first frame, and optionally a last frame — the model animates between them."
+                : "A prompt, plus any reference images, video, audio or saved characters."}
             </p>
           </div>
         )}
@@ -1174,7 +1300,7 @@ export default function VideoPanel({
         {notices.length > 0 && (
           <div className="mb-3 space-y-1">
             {notices.map((n, i) => (
-              <p key={i} className="text-xs text-warn font-mono">
+              <p key={i} className="text-xs text-warn">
                 ⚠ {n}
               </p>
             ))}
@@ -1187,7 +1313,7 @@ export default function VideoPanel({
               const item = slot === "first" ? firstFrame : lastFrame;
               return (
                 <div key={slot}>
-                  <p className="mb-1.5 text-[11px] font-mono text-muted">
+                  <p className="mb-1.5 text-2xs text-muted">
                     {slot === "first"
                       ? "First frame (required)"
                       : "Last frame (optional)"}
@@ -1207,10 +1333,10 @@ export default function VideoPanel({
                         )}
                       </div>
                       <div className="px-2 py-1.5">
-                        <p className="text-[11px] font-mono truncate" title={item.name}>
+                        <p className="text-2xs truncate" title={item.name}>
                           {item.name}
                         </p>
-                        <p className="text-[10px] font-mono text-muted">
+                        <p className="text-2xs font-mono text-muted">
                           {item.state === "uploading" && "loading…"}
                           {item.state === "ready" &&
                             (item.size ? formatBytes(item.size) : "attached")}
@@ -1229,7 +1355,7 @@ export default function VideoPanel({
                         type="button"
                         onClick={() => setFrameSlot(slot, null)}
                         aria-label={`Remove ${slot} frame`}
-                        className="absolute top-1 right-1 w-5 h-5 rounded bg-black/70 text-muted hover:text-danger text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/65 backdrop-blur-sm text-white/75 hover:text-danger hover:bg-black/80 text-xs leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                       >
                         ✕
                       </button>
@@ -1245,7 +1371,7 @@ export default function VideoPanel({
                 </div>
               );
             })}
-            <p className="sm:col-span-2 text-[11px] font-mono text-muted">
+            <p className="sm:col-span-2 text-xs text-muted">
               frames: JPEG/PNG/BMP/WEBP ≤20MB · aspect ratio ≤ 8:1 · adaptive ratio recommended
             </p>
           </div>
@@ -1254,8 +1380,8 @@ export default function VideoPanel({
             {items.length === 0 && (
               <DropZone
                 accept="image/*,video/mp4,video/quicktime,.mp4,.mov,audio/*,.mp3,.wav,.m4a"
-                title="Drag & drop images / videos / audio"
-                hint={`…or drag a gallery asset here · images ≤20MB (max ${MAX_IMAGES}) · videos: mp4/mov ≤100MB, ≤15s each (max ${MAX_VIDEOS}, ${MAX_VIDEO_TOTAL_SEC}s combined) · audio: mp3/wav/m4a ≤15MB (first ${MAX_AUDIO_SEC}s used)`}
+                title="Drop images, video or audio"
+                hint={`Or click to browse, or drag one in from the gallery. Up to ${MAX_IMAGES} images, ${MAX_VIDEOS} videos (${MAX_VIDEO_TOTAL_SEC}s combined) and audio (first ${MAX_AUDIO_SEC}s used).`}
                 onFiles={handleFiles}
                 onAssetDrop={handleAssetDrop}
               />
@@ -1297,7 +1423,7 @@ export default function VideoPanel({
                       )}
                     </div>
                     <div className="px-2 py-1.5">
-                      <p className="text-[11px] font-mono truncate" title={item.name}>
+                      <p className="text-2xs truncate" title={item.name}>
                         {item.state === "ready" && item.kind === "image"
                           ? `Image ${imgIdx(item)}`
                           : item.state === "ready" && item.kind === "video"
@@ -1307,7 +1433,7 @@ export default function VideoPanel({
                               : item.kind}{" "}
                         · {item.name}
                       </p>
-                      <p className="text-[10px] font-mono text-muted">
+                      <p className="text-2xs font-mono text-muted">
                         {item.state === "uploading" && "uploading…"}
                         {item.state === "ready" &&
                           `${item.size ? formatBytes(item.size) : "attached"}${
@@ -1328,7 +1454,7 @@ export default function VideoPanel({
                       type="button"
                       onClick={() => removeItem(item.id)}
                       aria-label={`Remove ${item.name}`}
-                      className="absolute top-1 right-1 w-5 h-5 rounded bg-black/70 text-muted hover:text-danger text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/65 backdrop-blur-sm text-white/75 hover:text-danger hover:bg-black/80 text-xs leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                     >
                       ✕
                     </button>
@@ -1344,7 +1470,7 @@ export default function VideoPanel({
             )}
             {videos.length > 0 && (
               <p
-                className={`mt-2 text-[11px] font-mono ${
+                className={`mt-2 text-2xs font-mono ${
                   totalVideoSec > MAX_VIDEO_TOTAL_SEC ? "text-danger" : "text-muted"
                 }`}
               >
@@ -1362,9 +1488,9 @@ export default function VideoPanel({
               value={model}
               onChange={setModel}
               options={[
-                { value: "wan3.0-video", label: "wan3.0-video" },
-                { value: "wan3.0-video-prime", label: "prime (fast)" },
-                { value: "x-ai/grok-imagine-video-1.5", label: "grok imagine 1.5" },
+                { value: "wan3.0-video", label: "Wan 3.0" },
+                { value: "wan3.0-video-prime", label: "Prime" },
+                { value: "x-ai/grok-imagine-video-1.5", label: "Grok 1.5" },
               ]}
             />
           </Field>
@@ -1397,8 +1523,8 @@ export default function VideoPanel({
             label="Duration"
             hint={
               smartOn
-                ? `model picks · up to ${durationMax}s`
-                : `2–${durationMax} · refs use ${totalVideoSec.toFixed(1)}s of the ${TOTAL_BUDGET_SEC}s combined budget`
+                ? `model picks, up to ${durationMax}s`
+                : `2–${durationMax}s`
             }
           >
             <div className="flex flex-col gap-2">
@@ -1407,16 +1533,16 @@ export default function VideoPanel({
                   value={smartOn ? "smart" : "fixed"}
                   onChange={(v) => setSmartDuration(v === "smart")}
                   options={[
-                    { value: "fixed", label: "fixed length" },
-                    { value: "smart", label: "✦ smart" },
+                    { value: "fixed", label: "Fixed length" },
+                    { value: "smart", label: "✦ Smart" },
                   ]}
                 />
               )}
               {smartOn ? (
-                <p className="text-[11px] font-mono text-warn leading-snug">
-                  ⚠ the model chooses the length (up to {durationMax}s) — you are
+                <p className="text-xs text-warn leading-snug">
+                  The model chooses the length, up to {durationMax}s. You are
                   billed for what it produces, so the cost is not known until the
-                  video lands
+                  video lands.
                 </p>
               ) : (
                 <Slider
@@ -1426,6 +1552,12 @@ export default function VideoPanel({
                   max={durationMax}
                   suffix="s"
                 />
+              )}
+              {totalVideoSec > 0 && (
+                <p className="text-2xs text-muted">
+                  Reference video uses {totalVideoSec.toFixed(1)}s of the{" "}
+                  {TOTAL_BUDGET_SEC}s combined budget.
+                </p>
               )}
             </div>
           </Field>
@@ -1457,7 +1589,7 @@ export default function VideoPanel({
                 </span>
                 <h2
                   id="short-prompt-title"
-                  className="font-display font-semibold text-[15px] tracking-[0.12em] uppercase text-warn"
+                  className="font-semibold text-base  text-warn"
                 >
                   Prompt looks too short
                 </h2>
@@ -1477,7 +1609,7 @@ export default function VideoPanel({
                   <span className="text-ink">video</span>, not an image.
                 </p>
                 {activeText && (
-                  <p className="rounded border border-line bg-panel2 px-3 py-2 font-mono text-[11px] text-muted break-words line-clamp-3">
+                  <p className="rounded-md border border-line bg-panel2 px-3 py-2.5 text-xs text-ink/80 break-words line-clamp-3">
                     {activeText}
                   </p>
                 )}
@@ -1506,7 +1638,8 @@ export default function VideoPanel({
       <Btn
         onClick={() => void handleSubmit()}
         disabled={pending || preparing}
-        className="w-full py-3 font-display tracking-[0.2em] uppercase"
+        size="lg"
+        className="w-full"
       >
         {preparing
           ? "Preparing media…"

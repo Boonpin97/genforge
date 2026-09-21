@@ -110,6 +110,18 @@ export type CostRecord = {
   prompt: string;
   createdAt: number;
   estimate: number | null;
+  deleted?: boolean;
+};
+
+export type DeletedAssetRecord = {
+  id: string;
+  kind: "video" | "image";
+  model: string;
+  prompt: string;
+  createdAt: number;
+  deletedAt: number;
+  estimate: number | null;
+  projectId: string | null;
 };
 
 export type DirectorRun = {
@@ -139,6 +151,19 @@ export type ProjectCounts = {
   scripts: number;
   characters: number;
   uploads: number;
+  prompts: number;
+};
+
+export type PromptKind = "video" | "image" | "any";
+
+export type SavedPrompt = {
+  id: string;
+  text: string;
+  title: string;
+  kind: PromptKind;
+  projectId?: string | null;
+  createdAt: number;
+  updatedAt?: number;
 };
 
 export type UploadRecord = {
@@ -210,4 +235,22 @@ export type TaskPollResponse = {
   error?: ApiError;
   requestId?: string;
   estimate?: number | null;
+};
+
+export type RewriteJobStatus = "running" | "succeeded" | "failed";
+
+export type RewriteJob = {
+  id: string;
+  projectId: string | null;
+  status: RewriteJobStatus;
+  prompt: string;
+  inventory: string[];
+  sig: string;
+  model: string;
+  rewrote?: string;
+  error?: string;
+  estimate?: number | null;
+  createdAt: number;
+  updatedAt: number;
+  consumed: boolean;
 };

@@ -47,6 +47,39 @@ export async function setCharacterProject(
   return true;
 }
 
+export async function copyCharacter(
+  id: string,
+  projectId: string | null
+): Promise<Character | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return null;
+  const list = await readIndex();
+  const src = list.find((c) => c.id === id);
+  if (!src) return null;
+  const newId = randomUUID();
+  const srcDir = path.join(DATA_DIR, src.id);
+  const dstDir = path.join(DATA_DIR, newId);
+  await fs.mkdir(dstDir, { recursive: true });
+  try {
+    const entries = await fs.readdir(srcDir);
+    for (const f of entries)
+      await fs.copyFile(path.join(srcDir, f), path.join(dstDir, f));
+  } catch {
+    await fs.rm(dstDir, { recursive: true, force: true });
+    throw new Error(`Could not duplicate the files of character ${src.id}.`);
+  }
+  const copy: Character = {
+    ...src,
+    id: newId,
+    createdAt: Date.now(),
+    updatedAt: undefined,
+    projectId,
+  };
+  const fresh = await readIndex();
+  fresh.push(copy);
+  await writeIndex(fresh);
+  return copy;
+}
+
 export async function assignAllCharacters(projectId: string): Promise<number> {
   const list = await readIndex();
   let n = 0;

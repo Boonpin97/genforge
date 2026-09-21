@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { listAssets } from "./assets";
+import { listDeletedAssets } from "./spend";
 import type { CostRecord, DirectorRun } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "analytics");
@@ -151,10 +152,12 @@ export async function listDirectorScripts(
 export async function listCostRecords(
   project?: string | null
 ): Promise<CostRecord[]> {
-  const [assets, runs] = await Promise.all([
+  const [assets, runs, deleted] = await Promise.all([
     listAssets(project),
     readRuns(),
+    listDeletedAssets(project),
   ]);
+  const live = new Set(assets.map((a) => a.id));
   const scopedRuns =
     project === undefined
       ? runs
@@ -173,6 +176,17 @@ export async function listCostRecords(
       createdAt: a.createdAt,
       estimate: a.estimate ?? null,
     })),
+    ...deleted
+      .filter((r) => !live.has(r.id))
+      .map((r) => ({
+        id: r.id,
+        kind: r.kind,
+        model: r.model,
+        prompt: r.prompt,
+        createdAt: r.createdAt,
+        estimate: r.estimate ?? null,
+        deleted: true,
+      })),
     ...scopedRuns
       .filter((r) => !r.copied)
       .map((r) => ({

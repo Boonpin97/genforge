@@ -44,12 +44,14 @@ const nextId = () => `i${Date.now()}-${idCounter++}`;
 
 export default function ImagePanel({
   onSubmit,
-  injection,
+  promptInjection,
+  onSavePrompt,
   reuse,
   projectId,
 }: {
   onSubmit: (payload: ImageSubmitPayload) => Promise<boolean>;
-  injection: { characters: Character[]; nonce: number } | null;
+  promptInjection?: { text: string; nonce: number } | null;
+  onSavePrompt?: (text: string) => Promise<boolean>;
   reuse: { settings: ImageSettings; nonce: number } | null;
   projectId: string | null;
 }) {
@@ -73,7 +75,20 @@ export default function ImagePanel({
     itemsRef.current = items;
   }, [items]);
 
-  const injectionRef = useRef(0);
+  const promptRef = useRef(0);
+  const [promptSaved, setPromptSaved] = useState<"ok" | "err" | null>(null);
+  useEffect(() => {
+    if (!promptInjection || promptInjection.nonce === promptRef.current) return;
+    promptRef.current = promptInjection.nonce;
+    setPrompt(promptInjection.text);
+  }, [promptInjection]);
+
+  async function savePrompt() {
+    if (!onSavePrompt) return;
+    const ok = await onSavePrompt(prompt);
+    setPromptSaved(ok ? "ok" : "err");
+    window.setTimeout(() => setPromptSaved(null), 2500);
+  }
 
   const reuseRef = useRef(0);
   useEffect(() => {
@@ -112,60 +127,6 @@ export default function ImagePanel({
     }. Preserve the identity of ${c.name}. `;
   }
 
-  async function attachRefs(
-    working: ImageItem[],
-    c: Character
-  ): Promise<{ ok: boolean; msg?: string; warnings: string[] }> {
-    const warnings: string[] = [];
-    const slots = MAX_IMAGES - working.length;
-    if (slots <= 0)
-      return {
-        ok: false,
-        msg: `Reference slots full (max ${MAX_IMAGES}) — cannot attach ${c.name}`,
-        warnings,
-      };
-    const attachCount = Math.min(slots, c.imageCount);
-    if (slots < c.imageCount)
-      warnings.push(
-        `Only ${slots} slot(s) free for ${c.name} — using first ${slots} of ${c.imageCount} images`
-      );
-    const base = working.length;
-    const newItems: ImageItem[] = [];
-    for (let i = 0; i < attachCount; i++) {
-      newItems.push({
-        id: nextId(),
-        name: `Image ${base + i + 1}`,
-        size: 0,
-        state: "loading",
-        characterId: c.id,
-      });
-    }
-    working.push(...newItems);
-    setItems([...working]);
-    for (let i = 0; i < attachCount; i++) {
-      const item = newItems[i];
-      try {
-        const res = await fetch(charImgUrl(c, i));
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const blob = await res.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        const idx = working.findIndex((x) => x.id === item.id);
-        if (idx >= 0)
-          working[idx] = { ...working[idx], dataUrl, size: blob.size, state: "ready" };
-      } catch (e) {
-        const idx = working.findIndex((x) => x.id === item.id);
-        if (idx >= 0)
-          working[idx] = {
-            ...working[idx],
-            state: "error",
-            error: e instanceof Error ? e.message : "load failed",
-          };
-      }
-      setItems([...working]);
-    }
-    return { ok: true, warnings };
-  }
-
   const charRefsCache = useRef(new Map<string, string[]>());
 
   async function getCharRefs(
@@ -192,29 +153,6 @@ export default function ImagePanel({
     charRefsCache.current.set(key, images);
     return { refs: images, warnings };
   }
-
-  async function injectCharacter(c: Character) {
-    if (itemsRef.current.some((i) => i.characterId === c.id)) return;
-    const working = [...itemsRef.current];
-    const r = await attachRefs(working, c);
-    if (!r.ok) {
-      setNotice(r.msg || `Could not attach ${c.name}`);
-      return;
-    }
-    r.warnings.forEach(setNotice);
-    setNotice(
-      `Character "${c.name}" references attached — description is added when you generate`
-    );
-  }
-
-  useEffect(() => {
-    if (!injection || injection.nonce === injectionRef.current) return;
-    injectionRef.current = injection.nonce;
-    void (async () => {
-      for (const c of injection.characters) await injectCharacter(c);
-    })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [injection]);
 
   function updateItem(id: string, patch: Partial<ImageItem>) {
     setItems((list) => list.map((i) => (i.id === id ? { ...i, ...patch } : i)));
@@ -415,8 +353,25 @@ export default function ImagePanel({
           mediaSignature={mentionSig}
           chipCharacters
         />
+        <div className="mt-2 flex items-center justify-end gap-3 text-2xs text-muted">
+              {onSavePrompt && (
+                <button
+                  type="button"
+                  onClick={() => void savePrompt()}
+                  disabled={!prompt.trim()}
+                  title="Save this prompt to the Prompts tab so you can reuse it later"
+                  className="text-2xs text-muted hover:text-accent disabled:opacity-40 disabled:hover:text-muted transition-colors"
+                >
+                  {promptSaved === "ok"
+                    ? "✓ Saved to Prompts"
+                    : promptSaved === "err"
+                      ? "Could not save"
+                      : "🔖 Save prompt"}
+                </button>
+              )}
+        </div>
         <div className="mt-3">
-          <Field label="Negative prompt" hint="optional · ≤500 chars">
+          <Field label="Negative prompt" hint="Optional, up to 500 characters">
             <TextInput
               value={negativePrompt}
               maxLength={500}
@@ -431,14 +386,14 @@ export default function ImagePanel({
         {items.length === 0 && (
           <DropZone
             accept="image/*"
-            title="Drag & drop images"
-            hint={`…or drag a gallery image here · 1–${MAX_IMAGES} images · jpg/png/bmp/webp ≤10MB`}
+            title="Drop images"
+            hint={`Or click to browse, or drag one in from the gallery. 1–${MAX_IMAGES} images, jpg/png/bmp/webp up to 10MB.`}
             onFiles={handleFiles}
             onAssetDrop={handleAssetDrop}
           />
         )}
         {notice && (
-          <p className="mt-3 text-xs text-warn font-mono">⚠ {notice}</p>
+          <p className="mt-3 text-xs text-warn">⚠ {notice}</p>
         )}
         {items.length > 0 && (
           <div className="mt-4 grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-6 gap-3">
@@ -456,17 +411,17 @@ export default function ImagePanel({
                       className="w-full h-full object-cover"
                     />
                   ) : (
-                    <span className="text-muted text-[10px] font-mono">
+                    <span className="text-muted text-2xs">
                       {item.state === "error" ? "failed" : "loading…"}
                     </span>
                   )}
                 </div>
                 <div className="px-1.5 py-1">
-                  <p className="text-[10px] font-mono truncate" title={item.name}>
+                  <p className="text-2xs truncate" title={item.name}>
                     Image {idx + 1} · {formatBytes(item.size)}
                   </p>
                   {item.error && (
-                    <p className="text-[10px] font-mono text-danger truncate">
+                    <p className="text-2xs text-danger truncate">
                       {item.error}
                     </p>
                   )}
@@ -477,7 +432,7 @@ export default function ImagePanel({
                     setItems((list) => list.filter((i) => i.id !== item.id))
                   }
                   aria-label={`Remove ${item.name}`}
-                  className="absolute top-1 right-1 w-5 h-5 rounded bg-black/70 text-muted hover:text-danger text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                  className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/65 backdrop-blur-sm text-white/75 hover:text-danger hover:bg-black/80 text-xs leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                 >
                   ✕
                 </button>
@@ -500,24 +455,18 @@ export default function ImagePanel({
               value={model}
               onChange={setModel}
               options={[
-                { value: "qwen-image-3.0-pro", label: "3.0-pro" },
-                { value: "qwen-image-3.0", label: "3.0 (fast)" },
-                { value: "google/gemini-3.1-flash-image", label: "nano banana 2" },
+                { value: "qwen-image-3.0-pro", label: "Qwen Pro" },
+                { value: "qwen-image-3.0", label: "Qwen Fast" },
+                { value: "google/gemini-3.1-flash-image", label: "Nano Banana" },
               ]}
             />
-            <input
-              value={customModel}
-              onChange={(e) => setCustomModel(e.target.value)}
-              placeholder="…or any OpenRouter id, e.g. google/gemini-3-pro-image (xai has no image model on OpenRouter)"
-              className="mt-2 w-full bg-panel2 border border-line rounded px-3 py-2 text-xs font-mono text-ink placeholder:text-muted/50 outline-none focus:border-accent/60 transition-colors"
-            />
           </Field>
-          <Field label="Aspect ratio" hint="standard 1K">
+          <Field label="Aspect ratio" hint="Standard 1K">
             <Select
               value={size}
               onChange={setSize}
               options={[
-                { value: "auto", label: "auto (model decides)" },
+                { value: "auto", label: "Auto (model decides)" },
                 { value: "1333*750", label: "16:9 · 1333×750" },
                 { value: "750*1333", label: "9:16 · 750×1333" },
                 { value: "1155*866", label: "4:3 · 1155×866" },
@@ -526,14 +475,27 @@ export default function ImagePanel({
               ]}
             />
           </Field>
-          <Field label="Images (n)" hint="1–6">
+          <div className="sm:col-span-2">
+            <Field
+              label="Custom model"
+              hint="Optional — overrides the choice above"
+            >
+              <input
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="Any OpenRouter id, e.g. google/gemini-3-pro-image"
+                className="w-full h-9 bg-panel2 border border-line rounded-md px-3 text-xs font-mono text-ink placeholder:text-muted/60 outline-none focus:border-accent/50 transition-colors"
+              />
+            </Field>
+          </div>
+          <Field label="Images" hint="1–6">
             <Seg
               value={String(n)}
               onChange={(v) => setN(Number(v))}
               options={["1", "2", "3", "4", "5", "6"].map((v) => ({ value: v, label: v }))}
             />
           </Field>
-          <Field label="Seed" hint="optional">
+          <Field label="Seed" hint="Optional">
             <TextInput
               value={seed}
               onChange={(e) => setSeed(e.target.value)}
@@ -559,7 +521,8 @@ export default function ImagePanel({
       <Btn
         onClick={handleSubmit}
         disabled={loading || preparing}
-        className="w-full py-3 font-display tracking-[0.2em] uppercase"
+        size="lg"
+        className="w-full"
       >
         {preparing
           ? "Preparing media…"

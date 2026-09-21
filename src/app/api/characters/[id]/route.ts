@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
+  copyCharacter,
   deleteCharacter,
   setCharacterProject,
   updateCharacter,
@@ -36,6 +37,19 @@ export async function PATCH(
   const { id } = await params;
   try {
     const form = await req.formData();
+    const copyRaw = form.get("copyProject");
+    if (copyRaw !== null) {
+      const copy = await copyCharacter(
+        id,
+        copyRaw === "" || copyRaw === "none" ? null : String(copyRaw)
+      );
+      if (!copy)
+        return NextResponse.json(
+          { code: "NotFound", message: "Character not found." },
+          { status: 404 }
+        );
+      return NextResponse.json({ ok: true, copied: true, character: copy });
+    }
     const moveRaw = form.get("moveProject");
     if (moveRaw !== null) {
       const ok = await setCharacterProject(

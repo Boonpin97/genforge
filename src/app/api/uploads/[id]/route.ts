@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteUpload, setUploadProject } from "@/lib/uploads";
+import { copyUpload, deleteUpload, setUploadProject } from "@/lib/uploads";
 
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  let body: { projectId?: string | null };
+  let body: { projectId?: string | null; action?: string };
   try {
     body = await req.json();
   } catch {
@@ -15,10 +15,18 @@ export async function PATCH(
       { status: 400 }
     );
   }
-  const ok = await setUploadProject(
-    id,
-    typeof body.projectId === "string" ? body.projectId : null
-  );
+  const raw = typeof body.projectId === "string" ? body.projectId : null;
+  const target = raw === "" || raw === "none" ? null : raw;
+  if (body.action === "copy") {
+    const copy = await copyUpload(id, target);
+    if (!copy)
+      return NextResponse.json(
+        { code: "NotFound", message: "Upload not found." },
+        { status: 404 }
+      );
+    return NextResponse.json({ ok: true, copied: true, upload: copy });
+  }
+  const ok = await setUploadProject(id, target);
   if (!ok)
     return NextResponse.json(
       { code: "NotFound", message: "Upload not found." },

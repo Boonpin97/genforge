@@ -9,7 +9,14 @@ import DropZone, {
   getAudioDuration,
   type AssetDropData,
 } from "./drop-zone";
-import { Btn, Field, Panel, TextArea, TextInput } from "./ui";
+import {
+  Btn,
+  Field,
+  Panel,
+  RelocateSelect,
+  TextArea,
+  TextInput,
+} from "./ui";
 import type { Character } from "@/lib/types";
 import { charImgUrl } from "@/lib/types";
 
@@ -20,10 +27,8 @@ const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
 type PendingImage = { file: File; url: string };
 
 export default function CharactersPanel({
-  onUse,
   projectId,
 }: {
-  onUse: (target: "video" | "image", character: Character) => void;
   projectId: string | null;
 }) {
   const projectQs = projectId === null ? "none" : projectId;
@@ -84,14 +89,30 @@ export default function CharactersPanel({
       .catch(() => {});
   }, []);
 
-  async function moveCharacter(id: string, target: string) {
+  async function relocateCharacter(
+    id: string,
+    action: "move" | "copy",
+    target: string
+  ) {
     const form = new FormData();
-    form.append("moveProject", target);
+    form.append(action === "copy" ? "copyProject" : "moveProject", target);
     const res = await fetch(`/api/characters/${id}`, {
       method: "PATCH",
       body: form,
     });
-    if (res.ok) await refresh();
+    if (!res.ok) {
+      setNotice({ kind: "err", msg: `Could not ${action} this character` });
+      return;
+    }
+    const where =
+      target === "none"
+        ? "Unassigned"
+        : projects.find((p) => p.id === target)?.name || "another project";
+    setNotice({
+      kind: "ok",
+      msg: action === "copy" ? `Copied to ${where}` : `Moved to ${where}`,
+    });
+    await refresh();
   }
 
   function resetForm() {
@@ -326,21 +347,21 @@ export default function CharactersPanel({
     <div className="flex flex-col gap-4">
       <Panel title={editingId ? "Edit character" : "New character"} step={editingId ? "✎" : "+"}>
         {editingId && (
-          <div className="mb-4 flex items-center justify-between border border-accent/40 bg-accent/5 rounded px-3 py-2">
-            <span className="font-mono text-[11px] text-accent">
+          <div className="mb-4 flex items-center justify-between border border-accent/40 bg-accent/5 rounded-md px-3 py-2">
+            <span className="text-xs font-medium text-ink">
               editing saved character — changes apply on save
             </span>
             <button
               type="button"
               onClick={resetForm}
-              className="font-mono text-[10px] text-muted hover:text-ink border border-line rounded px-2 py-0.5"
+              className="text-xs text-muted hover:text-ink border border-line hover:border-muted/60 rounded-md px-3 min-h-8 inline-flex items-center transition-colors"
             >
               cancel
             </button>
           </div>
         )}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Name" hint="≤60 chars">
+          <Field label="Name" hint="Up to 60 characters">
             <TextInput
               value={name}
               maxLength={60}
@@ -348,10 +369,10 @@ export default function CharactersPanel({
               placeholder="e.g. Nova the courier"
             />
           </Field>
-          <Field label="Voice sample" hint="optional · wav/mp3 ≤15MB">
+          <Field label="Voice sample" hint="Optional, wav or mp3 up to 15MB">
             <div className="flex items-center gap-2">
               <label className="flex-1 cursor-pointer">
-                <span className="block bg-panel2 border border-line rounded px-3 py-2 text-sm text-muted hover:border-accent/50 transition-colors truncate">
+                <span className="block bg-panel2 border border-line rounded-md px-3 py-2 text-sm text-muted hover:border-accent/50 transition-colors truncate">
                   {audioFile
                     ? audioFile.name
                     : editingId && editHadAudio && !removeExistingAudio
@@ -373,7 +394,7 @@ export default function CharactersPanel({
                 <button
                   type="button"
                   onClick={() => setAudioFile(null)}
-                  className="text-muted hover:text-danger text-xs font-mono"
+                  className="text-muted hover:text-danger text-sm"
                 >
                   ✕
                 </button>
@@ -383,7 +404,7 @@ export default function CharactersPanel({
               <button
                 type="button"
                 onClick={() => setRemoveExistingAudio((v) => !v)}
-                className={`mt-1.5 font-mono text-[10px] border rounded px-2 py-0.5 transition-colors ${
+                className={`mt-1.5 text-xs border rounded-md px-3 min-h-8 inline-flex items-center transition-colors ${
                   removeExistingAudio
                     ? "border-danger/60 text-danger"
                     : "border-line text-muted hover:text-ink"
@@ -397,7 +418,7 @@ export default function CharactersPanel({
           </Field>
         </div>
         <div className="mt-4">
-          <Field label="Appearance / persona description" hint="injected into the prompt">
+          <Field label="Appearance / persona description" hint="Added to the prompt">
             <TextArea
               rows={2}
               maxLength={600}
@@ -405,14 +426,17 @@ export default function CharactersPanel({
               onChange={(e) => setDescription(e.target.value)}
               placeholder="young woman, short silver hair, amber eyes, worn red flight jacket, confident smirk…"
             />
-            <div className="mt-1.5 flex justify-end">
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className="text-2xs text-muted">
+                Auto-write reads the reference images you have added.
+              </p>
               <Btn
                 variant="ghost"
+                size="sm"
                 onClick={autoDescribe}
                 disabled={descBusy || busy || !name.trim()}
-                className="px-2.5 py-1 text-[11px] font-mono"
               >
-                {descBusy ? "drafting…" : "✦ auto-write · reads your images"}
+                {descBusy ? "Writing…" : "✦ Auto-write"}
               </Btn>
             </div>
           </Field>
@@ -422,7 +446,7 @@ export default function CharactersPanel({
             <DropZone
               accept="image/png,image/jpeg,image/webp,image/bmp"
               title={`Reference images (1–${MAX_IMAGES})`}
-              hint="…or drag a gallery image here · front / side / full-body shots work best · png/jpeg/webp/bmp ≤10MB each"
+              hint="Front, side and full-body shots work best. Up to 10MB each."
               onFiles={addImages}
               onAssetDrop={addAsset}
               disabled={busy}
@@ -450,14 +474,14 @@ export default function CharactersPanel({
                         className="w-full h-full object-cover"
                       />
                     </div>
-                    <p className="px-1.5 py-1 text-[10px] font-mono text-muted truncate">
+                    <p className="px-1.5 py-1 text-2xs text-muted truncate">
                       {pos + 1}. saved
                     </p>
                     <button
                       type="button"
                       onClick={() => setExistingImages((l) => l.filter((x) => x !== idx))}
                       aria-label={`Remove image ${idx + 1}`}
-                      className="absolute top-1 right-1 w-5 h-5 rounded bg-black/70 text-muted hover:text-danger text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                      className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/65 backdrop-blur-sm text-white/75 hover:text-danger hover:bg-black/80 text-xs leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                     >
                       ✕
                     </button>
@@ -476,7 +500,7 @@ export default function CharactersPanel({
                       className="w-full h-full object-cover"
                     />
                   </div>
-                  <p className="px-1.5 py-1 text-[10px] font-mono text-muted truncate" title={p.file.name}>
+                  <p className="px-1.5 py-1 text-2xs text-muted truncate" title={p.file.name}>
                     {editingId ? existingImages.length + i + 1 : i + 1}.{" "}
                     {formatBytes(p.file.size)}
                   </p>
@@ -484,7 +508,7 @@ export default function CharactersPanel({
                     type="button"
                     onClick={() => removeImage(i)}
                     aria-label={`Remove ${p.file.name}`}
-                    className="absolute top-1 right-1 w-5 h-5 rounded bg-black/70 text-muted hover:text-danger text-xs leading-none opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute top-1.5 right-1.5 w-7 h-7 rounded-md bg-black/65 backdrop-blur-sm text-white/75 hover:text-danger hover:bg-black/80 text-xs leading-none opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity"
                   >
                     ✕
                   </button>
@@ -502,7 +526,7 @@ export default function CharactersPanel({
         </div>
         {notice && (
           <p
-            className={`mt-3 text-xs font-mono ${
+            className={`mt-3 text-xs ${
               notice.kind === "ok" ? "text-ok" : "text-danger"
             }`}
           >
@@ -523,15 +547,15 @@ export default function CharactersPanel({
             No characters yet — create one above.
           </p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="flex flex-col gap-2.5">
             {characters.map((c) => (
               <div
                 key={c.id}
-                className={`border rounded-md bg-panel2 overflow-hidden flex gap-3 p-3 animate-rise ${
+                className={`border rounded-lg bg-panel2 overflow-hidden flex gap-3 p-3 animate-rise ${
                   editingId === c.id ? "border-accent/60" : "border-line"
                 }`}
               >
-                <div className="w-20 h-20 shrink-0 rounded border border-line overflow-hidden bg-black/40">
+                <div className="w-16 h-16 shrink-0 rounded-md border border-line overflow-hidden bg-black/40">
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={charImgUrl(c, 0)}
@@ -541,71 +565,48 @@ export default function CharactersPanel({
                 </div>
                 <div className="min-w-0 flex-1 flex flex-col">
                   <div className="flex items-center gap-2">
-                    <p className="font-display font-semibold text-sm text-ink truncate">
+                    <p className="font-semibold text-sm text-ink truncate">
                       {c.name}
                     </p>
                     {c.hasAudio && (
-                      <span className="font-mono text-[9px] text-accent border border-accent/40 rounded px-1">
+                      <span className="text-2xs font-medium text-accent bg-accent/10 rounded-full px-2 py-0.5">
                         voice
                       </span>
                     )}
+                    <span className="ml-auto shrink-0 text-2xs text-muted">
+                      {c.imageCount} image{c.imageCount === 1 ? "" : "s"}
+                    </span>
                   </div>
-                  <p className="text-[11px] text-muted line-clamp-2 mt-0.5">
-                    {c.description || "no description"}
+                  <p className="text-2xs text-muted line-clamp-2 mt-1">
+                    {c.description || "No description yet"}
                   </p>
-                  <p className="text-[10px] font-mono text-muted mt-auto pt-1">
-                    {c.imageCount} image{c.imageCount === 1 ? "" : "s"} ·{" "}
-                    {new Date(c.createdAt).toLocaleDateString()}
-                  </p>
-                  <div className="flex gap-1.5 mt-2 flex-wrap">
-                    <button
-                      type="button"
-                      onClick={() => onUse("video", c)}
-                      className="font-mono text-[10px] border border-accent/50 text-accent rounded px-2 py-1 hover:bg-accent hover:text-[#10130c] transition-colors"
-                    >
-                      → use in video
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => onUse("image", c)}
-                      className="font-mono text-[10px] border border-line text-muted rounded px-2 py-1 hover:border-[#7cc7ff]/60 hover:text-[#7cc7ff] transition-colors"
-                    >
-                      → use in image
-                    </button>
-                    <select
-                      value=""
-                      onChange={(e) =>
-                        e.target.value && void moveCharacter(c.id, e.target.value)
-                      }
-                      title="Move character to another project"
-                      className="font-mono text-[10px] border border-line text-muted rounded px-1 py-1 bg-panel2 outline-none focus:border-accent/60"
-                    >
-                      <option value="">move to…</option>
-                      {projects
-                        .filter((p) => p.id !== projectId)
-                        .map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name}
-                          </option>
-                        ))}
-                      {projectId !== null && (
-                        <option value="none">Unassigned</option>
-                      )}
-                    </select>
-                    <button
-                      type="button"
+                  <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+                    <Btn
+                      variant="ghost"
+                      size="sm"
                       onClick={() => startEdit(c)}
-                      className="font-mono text-[10px] border border-line text-muted rounded px-2 py-1 hover:border-warn/60 hover:text-warn transition-colors"
+                      title="Load this character into the form above"
                     >
-                      edit
-                    </button>
-                    <button
-                      type="button"
+                      Edit
+                    </Btn>
+                    <RelocateSelect
+                      projects={projects}
+                      currentProjectId={projectId}
+                      trigger="text"
+                      triggerLabel="Move or copy"
+                      label="Move or copy this character to another project"
+                      onPick={(action, target) =>
+                        void relocateCharacter(c.id, action, target)
+                      }
+                    />
+                    <Btn
+                      variant="danger"
+                      size="sm"
                       onClick={() => removeCharacter(c)}
-                      className="font-mono text-[10px] border border-line text-muted rounded px-2 py-1 hover:border-danger/60 hover:text-danger transition-colors ml-auto"
+                      title="Delete this character and its files"
                     >
-                      delete
-                    </button>
+                      Delete
+                    </Btn>
                   </div>
                 </div>
               </div>

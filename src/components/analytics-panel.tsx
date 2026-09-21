@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { ErrorBox, Panel, Seg } from "./ui";
+import { Chip, ErrorBox, Panel, Seg } from "./ui";
 import { formatSGD, SGD_RATE } from "@/lib/pricing";
 import type { CostKind, CostRecord } from "@/lib/types";
 
@@ -9,33 +9,40 @@ type RangeKey = "today" | "week" | "month" | "all" | "custom";
 type KindKey = "all" | CostKind;
 
 const RANGES: { id: RangeKey; label: string }[] = [
-  { id: "today", label: "today" },
+  { id: "today", label: "Today" },
   { id: "week", label: "7 days" },
   { id: "month", label: "1 month" },
-  { id: "all", label: "all time" },
-  { id: "custom", label: "custom" },
+  { id: "all", label: "All time" },
+  { id: "custom", label: "Custom" },
 ];
 
 const KINDS: { id: KindKey; label: string }[] = [
-  { id: "all", label: "all" },
-  { id: "video", label: "video" },
-  { id: "image", label: "image" },
-  { id: "director", label: "director" },
-  { id: "rewrite", label: "rewrite" },
+  { id: "all", label: "All" },
+  { id: "video", label: "Video" },
+  { id: "image", label: "Images" },
+  { id: "director", label: "Director" },
+  { id: "rewrite", label: "Rewrites" },
 ];
 
 const KIND_COLORS: Record<CostKind, string> = {
-  video: "text-accent border-accent/40",
-  image: "text-[#7cc7ff] border-[#7cc7ff]/40",
-  director: "text-warn border-warn/40",
-  rewrite: "text-[#c58cff] border-[#c58cff]/40",
+  video: "text-cat-video bg-cat-video/10",
+  image: "text-cat-image bg-cat-image/10",
+  director: "text-cat-director bg-cat-director/10",
+  rewrite: "text-cat-rewrite bg-cat-rewrite/10",
 };
 
 const KIND_HEX: Record<CostKind, string> = {
-  video: "var(--color-accent)",
-  image: "#7cc7ff",
-  director: "var(--color-warn)",
-  rewrite: "#c58cff",
+  video: "var(--color-cat-video)",
+  image: "var(--color-cat-image)",
+  director: "var(--color-cat-director)",
+  rewrite: "var(--color-cat-rewrite)",
+};
+
+const KIND_LABEL: Record<CostKind, string> = {
+  video: "Video",
+  image: "Image",
+  director: "Director",
+  rewrite: "Rewrite",
 };
 
 const KIND_ORDER: CostKind[] = ["video", "image", "director", "rewrite"];
@@ -205,10 +212,8 @@ function fmtDay(ts: number): string {
 function Stat({ label, value }: { label: string; value: string }) {
   return (
     <div className="border border-line bg-panel2 rounded-md px-3 py-2.5">
-      <p className="text-[10px] font-mono uppercase tracking-[0.14em] text-muted">
-        {label}
-      </p>
-      <p className="font-display font-bold text-lg text-ink mt-0.5">{value}</p>
+      <p className="text-2xs text-muted">{label}</p>
+      <p className="font-semibold text-lg text-ink mt-1 tabular-nums">{value}</p>
     </div>
   );
 }
@@ -273,6 +278,11 @@ export default function AnalyticsPanel({
     return { lo, hi };
   }, [filtered]);
 
+  const deletedCount = useMemo(
+    () => filtered.filter((r) => r.deleted).length,
+    [filtered]
+  );
+
   const stats = useMemo(() => {
     let total = 0;
     let costed = 0;
@@ -321,18 +331,13 @@ export default function AnalyticsPanel({
       <Panel title="Period">
         <div className="flex flex-wrap items-center gap-1.5">
           {RANGES.map((r) => (
-            <button
+            <Chip
               key={r.id}
-              type="button"
+              active={range === r.id}
               onClick={() => setRange(r.id)}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-[0.1em] border transition-colors ${
-                range === r.id
-                  ? "border-accent/60 text-accent bg-accent/10"
-                  : "border-line text-muted hover:text-ink"
-              }`}
             >
               {r.label}
-            </button>
+            </Chip>
           ))}
           {range === "custom" && (
             <span className="flex items-center gap-1.5 ml-1">
@@ -340,66 +345,54 @@ export default function AnalyticsPanel({
                 type="date"
                 value={customFrom}
                 onChange={(e) => setCustomFrom(e.target.value)}
-                className="bg-panel2 border border-line rounded px-2 py-1 text-xs text-ink font-mono outline-none focus:border-accent/60"
+                className="bg-panel2 border border-line rounded-md px-2.5 h-8 text-xs text-ink font-mono outline-none focus:border-accent/50"
               />
-              <span className="text-muted text-xs">→</span>
+              <span className="text-muted text-xs">to</span>
               <input
                 type="date"
                 value={customTo}
                 onChange={(e) => setCustomTo(e.target.value)}
-                className="bg-panel2 border border-line rounded px-2 py-1 text-xs text-ink font-mono outline-none focus:border-accent/60"
+                className="bg-panel2 border border-line rounded-md px-2.5 h-8 text-xs text-ink font-mono outline-none focus:border-accent/50"
               />
             </span>
           )}
           <span className="ml-auto flex items-center gap-1.5">
-            <button
-              type="button"
+            <Chip
+              active={!allScope}
               onClick={() => setAllScope(false)}
-              aria-pressed={!allScope}
               title="Show only cost records from the project you have open"
-              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-[0.1em] border transition-colors ${
-                !allScope
-                  ? "border-accent/60 text-accent bg-accent/10"
-                  : "border-line text-muted hover:text-ink"
-              }`}
             >
-              current project
-            </button>
-            <button
-              type="button"
+              This project
+            </Chip>
+            <Chip
+              active={allScope}
               onClick={() => setAllScope(true)}
-              aria-pressed={allScope}
               title="Show cost records from every project in this workspace"
-              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-[0.1em] border transition-colors ${
-                allScope
-                  ? "border-accent/60 text-accent bg-accent/10"
-                  : "border-line text-muted hover:text-ink"
-              }`}
             >
-              all projects
-            </button>
+              All projects
+            </Chip>
           </span>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 mt-3">
           {KINDS.map((k) => (
-            <button
-              key={k.id}
-              type="button"
-              onClick={() => setKind(k.id)}
-              className={`px-2.5 py-1 rounded text-[11px] font-mono uppercase tracking-[0.1em] border transition-colors ${
-                kind === k.id
-                  ? "border-accent/60 text-accent bg-accent/10"
-                  : "border-line text-muted hover:text-ink"
-              }`}
-            >
-              {k.label} <span className="opacity-70">({counts[k.id]})</span>
-            </button>
+            <Chip key={k.id} active={kind === k.id} onClick={() => setKind(k.id)}>
+              {k.label}
+              <span className="tabular-nums opacity-60">{counts[k.id]}</span>
+            </Chip>
           ))}
         </div>
-        <p className="mt-3 pt-2.5 border-t border-line text-[11px] font-mono text-muted">
-          showing{" "}
-          <span className="text-accent">{filtered.length}</span>{" "}
-          record{filtered.length === 1 ? "" : "s"} ·{" "}
+        <p className="mt-3 pt-2.5 border-t border-line text-2xs text-muted">
+          Showing{" "}
+          <span className="text-ink font-medium">{filtered.length}</span>{" "}
+          record{filtered.length === 1 ? "" : "s"}
+          {deletedCount > 0 && (
+            <>
+              {" "}
+              (<span className="text-ink">{deletedCount}</span> from deleted
+              assets)
+            </>
+          )}{" "}
+          from{" "}
           <span className="text-ink">
             {span
               ? span.hi - span.lo < 864e5 && range === "today"
@@ -409,14 +402,14 @@ export default function AnalyticsPanel({
                 ? "no records yet"
                 : `${fmtDay(from)} – ${fmtDay(to)}`}
           </span>{" "}
-          · <span className="text-ink">{allScope ? "all projects" : "current project"}</span>
+          {" "}in <span className="text-ink">{allScope ? "all projects" : "this project"}</span>
         </p>
       </Panel>
 
       {error && <ErrorBox code="Analytics" message={error} />}
 
       {!loaded && !error && (
-        <p className="text-sm text-muted font-mono py-6 text-center">
+        <p className="text-sm text-muted py-6 text-center">
           loading records…
         </p>
       )}
@@ -424,11 +417,11 @@ export default function AnalyticsPanel({
       {loaded && !error && (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <Stat label="est. spend (S$)" value={formatSGD(stats.total || null)} />
-            <Stat label="generations" value={String(filtered.length)} />
-            <Stat label="billed (est.)" value={String(stats.costed)} />
+            <Stat label="Estimated spend" value={formatSGD(stats.total || null)} />
+            <Stat label="Generations" value={String(filtered.length)} />
+            <Stat label="Billed" value={String(stats.costed)} />
             <Stat
-              label="avg / gen"
+              label="Average each"
               value={formatSGD(stats.costed ? stats.total / stats.costed : null)}
             />
           </div>
@@ -438,14 +431,14 @@ export default function AnalyticsPanel({
               {(["video", "image", "director", "rewrite"] as const).map((k) => (
                 <div key={k} className="border border-line bg-panel2 rounded-md px-3 py-2.5">
                   <p
-                    className={`text-[10px] font-mono uppercase tracking-[0.14em] border rounded px-1.5 py-0.5 inline-block ${KIND_COLORS[k]}`}
+                    className={`text-2xs font-medium rounded-full px-2 py-1 inline-block ${KIND_COLORS[k]}`}
                   >
-                    {k}
+                    {KIND_LABEL[k]}
                   </p>
-                  <p className="font-display font-bold text-lg text-ink mt-1.5">
+                  <p className="font-semibold text-lg text-ink mt-2 tabular-nums">
                     {formatSGD(stats.byKind[k].cost || null)}
                   </p>
-                  <p className="text-[10px] font-mono text-muted">
+                  <p className="text-2xs text-muted">
                     {stats.byKind[k].n} generation{stats.byKind[k].n === 1 ? "" : "s"}
                   </p>
                 </div>
@@ -460,8 +453,8 @@ export default function AnalyticsPanel({
                   value={metric}
                   onChange={setMetric}
                   options={[
-                    { value: "cost", label: "est. cost (S$)" },
-                    { value: "count", label: "generations" },
+                    { value: "cost", label: "Cost" },
+                    { value: "count", label: "Generations" },
                   ]}
                 />
               </div>
@@ -469,16 +462,16 @@ export default function AnalyticsPanel({
                 {KIND_ORDER.map((k) => (
                   <span
                     key={k}
-                    className="flex items-center gap-1.5 text-[10px] font-mono uppercase tracking-[0.12em] text-muted"
+                    className="flex items-center gap-1.5 text-2xs text-muted"
                   >
                     <span
-                      className="w-2 h-2 rounded-sm"
+                      className="w-2 h-2 rounded-full"
                       style={{ background: KIND_HEX[k] }}
                     />
-                    {k}
+                    {KIND_LABEL[k]}
                   </span>
                 ))}
-                <span className="text-[10px] font-mono text-muted">
+                <span className="text-2xs text-muted">
                   peak{" "}
                   {metric === "cost"
                     ? formatSGD(max)
@@ -523,7 +516,7 @@ export default function AnalyticsPanel({
                       >
                         {total > 0 && (
                           <span
-                            className={`text-[8px] font-mono text-muted text-center leading-none pb-1 ${
+                            className={`text-2xs text-muted text-center leading-none pb-1 ${
                               buckets.length > 14
                                 ? "[writing-mode:vertical-rl] rotate-180 mx-auto"
                                 : ""
@@ -565,7 +558,7 @@ export default function AnalyticsPanel({
                   {buckets.map((b, i) => (
                     <span
                       key={b.key}
-                      className="flex-1 min-w-0 text-center text-[9px] font-mono text-muted truncate"
+                      className="flex-1 min-w-0 text-center text-2xs text-muted truncate tabular-nums"
                     >
                       {i % labelEvery === 0 ||
                       i === buckets.length - 1
@@ -591,19 +584,19 @@ export default function AnalyticsPanel({
               <div className="overflow-x-auto">
                 <table className="w-full text-left">
                   <thead>
-                    <tr className="text-[10px] font-mono uppercase tracking-[0.12em] text-muted border-b border-line">
-                      <th className="py-1.5 pr-3">when</th>
-                      <th className="py-1.5 pr-3">type</th>
-                      <th className="py-1.5 pr-3">model</th>
-                      <th className="py-1.5 pr-3">prompt</th>
-                      <th className="py-1.5 text-right">est. cost (S$)</th>
+                    <tr className="text-2xs text-muted border-b border-line">
+                      <th className="py-1.5 pr-3 font-medium">When</th>
+                      <th className="py-1.5 pr-3 font-medium">Type</th>
+                      <th className="py-1.5 pr-3 font-medium">Model</th>
+                      <th className="py-1.5 pr-3 font-medium">Prompt</th>
+                      <th className="py-1.5 text-right font-medium">Est. cost</th>
                     </tr>
                   </thead>
                   <tbody>
                     {filtered.slice(0, 60).map((r) => (
                       <tr
                         key={r.id}
-                        className="text-[11px] font-mono border-b border-line/50"
+                        className="text-xs border-b border-line/50"
                       >
                         <td className="py-1.5 pr-3 text-muted whitespace-nowrap">
                           {new Date(r.createdAt).toLocaleString(undefined, {
@@ -614,10 +607,20 @@ export default function AnalyticsPanel({
                           })}
                         </td>
                         <td className="py-1.5 pr-3">
-                          <span
-                            className={`border rounded px-1.5 py-0.5 text-[9px] uppercase ${KIND_COLORS[r.kind]}`}
-                          >
-                            {r.kind}
+                          <span className="inline-flex items-center gap-1.5">
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-2xs font-medium ${KIND_COLORS[r.kind]}`}
+                            >
+                              {KIND_LABEL[r.kind]}
+                            </span>
+                            {r.deleted && (
+                              <span
+                                className="rounded-full px-2 py-0.5 text-2xs font-medium text-muted bg-line/60"
+                                title="The file was deleted — the cost it already incurred stays in this report"
+                              >
+                                deleted
+                              </span>
+                            )}
                           </span>
                         </td>
                         <td className="py-1.5 pr-3 text-ink/80 max-w-[140px] truncate">
@@ -637,7 +640,7 @@ export default function AnalyticsPanel({
                   </tbody>
                 </table>
                 {filtered.length > 60 && (
-                  <p className="mt-2 text-[10px] font-mono text-muted">
+                  <p className="mt-2 text-2xs text-muted">
                     showing latest 60 of {filtered.length}
                   </p>
                 )}
@@ -647,11 +650,12 @@ export default function AnalyticsPanel({
         </>
       )}
 
-      <p className="text-[10px] font-mono text-muted">
+      <p className="text-2xs text-muted">
         all costs shown in SGD (fixed 1.3 × USD); underlying estimates come
         from rates in src/lib/pricing.ts · failed generations are not expected
-        to incur cost · director runs are recorded from now on (earlier ones
-        are missing)
+        to incur cost · deleting an asset keeps its cost here, since the money
+        was already spent (assets deleted before this was added are missing) ·
+        director runs are recorded from now on (earlier ones are missing)
       </p>
     </div>
   );
