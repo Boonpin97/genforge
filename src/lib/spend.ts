@@ -6,6 +6,15 @@ const DATA_DIR = path.join(process.cwd(), "data", "analytics");
 const SPEND_FILE = path.join(DATA_DIR, "deleted-assets.json");
 const MAX_RECORDS = 5000;
 
+export function videoDurationSec(a: StoredAsset): number | undefined {
+  const u = a.usage as { output_video_duration?: number; duration?: number } | undefined;
+  const fromUsage = u?.output_video_duration ?? u?.duration;
+  if (typeof fromUsage === "number" && fromUsage > 0) return fromUsage;
+  const s = a.settings as { duration?: number } | undefined;
+  if (typeof s?.duration === "number" && s.duration > 0) return s.duration;
+  return undefined;
+}
+
 export async function listDeletedAssets(
   project?: string | null
 ): Promise<DeletedAssetRecord[]> {
@@ -45,6 +54,8 @@ export async function archiveDeletedAssets(
       deletedAt,
       estimate: a.estimate ?? null,
       projectId: a.projectId ?? null,
+      used: a.used,
+      durationSec: a.kind === "video" ? videoDurationSec(a) : undefined,
     }));
   if (!added.length) return 0;
   await fs.mkdir(DATA_DIR, { recursive: true });

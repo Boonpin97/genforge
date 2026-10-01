@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ApiErrorLike,
-  dashscope,
-  extractError,
-} from "@/lib/dashscope";
-import { estimateImageCost } from "@/lib/pricing";
+import { dashscope, extractError } from "@/lib/dashscope";
+import { ApiErrorLike, errorStatus } from "@/lib/errors";
+import { requireModel } from "@/lib/config";
+import { checkImage } from "@/lib/policy-check";
+import { estimateImage } from "@/lib/estimate";
 import type { ImageUsage } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -42,14 +41,13 @@ export async function POST(req: NextRequest) {
   const images = (body.images || []).filter(
     (u) => typeof u === "string" && u.length > 0
   );
-  if (images.length > 3) {
-    return NextResponse.json(
-      { code: "BadRequest", message: "At most 3 reference images allowed." },
-      { status: 400 }
-    );
-  }
-
   try {
+    const entry = await requireModel(body.model, "image");
+    if (entry.provider !== "alibaba")
+      throw new ApiErrorLike("BadRequest", `${entry.label} is an OpenRouter model.`);
+    const policy = entry.policy;
+    const n = typeof body.n === "number" ? body.n : 1;
+    checkImage(entry, { refs: images.length, n });
     const content: Record<string, string>[] = [
       ...images.map((image) => ({ image })),
       { text: prompt },
@@ -57,18 +55,20 @@ export async function POST(req: NextRequest) {
 
     const parameters: Record<string, unknown> = {};
     if (body.size && body.size !== "auto") parameters.size = body.size;
-    if (typeof body.n === "number") parameters.n = body.n;
-    if (body.negativePrompt) parameters.negative_prompt = body.negativePrompt;
-    parameters.prompt_extend = body.promptExtend !== false;
-    if (typeof body.watermark === "boolean") parameters.watermark = body.watermark;
-    if (typeof body.seed === "number") parameters.seed = body.seed;
+    parameters.n = n;
+    if (body.negativePrompt && policy.negativePrompt)
+      parameters.negative_prompt = body.negativePrompt;
+    if (policy.promptExtend) parameters.prompt_extend = body.promptExtend !== false;
+    if (typeof body.watermark === "boolean" && policy.watermark)
+      parameters.watermark = body.watermark;
+    if (typeof body.seed === "number" && policy.seed) parameters.seed = body.seed;
 
     const res = await dashscope(
       "/api/v1/services/aigc/multimodal-generation/generation",
       {
         method: "POST",
         json: {
-          model: body.model === "qwen-image-3.0" ? "qwen-image-3.0" : "qwen-image-3.0-pro",
+          model: entry.id,
           input: { messages: [{ role: "user", content }] },
           parameters,
         },
@@ -110,11 +110,11 @@ export async function POST(req: NextRequest) {
       images: imageUrls,
       usage: out.usage || null,
       requestId: out.request_id || null,
-      estimate: estimateImageCost(out.usage),
+      estimate: estimateImage(entry, { usage: out.usage, count: imageUrls.length }),
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {
-      return NextResponse.json(err.toApiError(), { status: 500 });
+      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
     }
     return NextResponse.json(
       {

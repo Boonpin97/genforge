@@ -37,6 +37,7 @@ function Tile({
   onOpen,
   onDelete,
   onToggleHidden,
+  onTogglePinned,
   selecting,
   selected,
 }: {
@@ -47,6 +48,7 @@ function Tile({
   selecting: boolean;
   selected: boolean;
   onToggleHidden?: () => void;
+  onTogglePinned?: () => void;
 }) {
   const active =
     task.status === "submitting" ||
@@ -103,7 +105,9 @@ function Tile({
           onOpen();
         }
       }}
-      className="cursor-pointer text-left border border-line bg-panel rounded-md overflow-hidden hover:border-accent/60 transition-colors group"
+      className={`cursor-pointer text-left border bg-panel rounded-md overflow-hidden hover:border-accent/60 transition-colors group ${
+        task.pinned ? "border-accent/70" : "border-line"
+      }`}
     >
       <div className="relative aspect-video bg-black/50 flex items-center justify-center overflow-hidden">
         {selecting && (
@@ -160,7 +164,7 @@ function Tile({
         </span>
         <div
           className={`absolute top-1.5 right-1.5 flex items-center gap-0.5 rounded-md bg-black/65 backdrop-blur-sm p-0.5 transition-opacity ${
-            task.hidden || task.status === "failed"
+            task.hidden || task.pinned || task.status === "failed"
               ? "opacity-100"
               : "opacity-0 group-hover:opacity-100 focus-within:opacity-100"
           }`}
@@ -194,6 +198,24 @@ function Tile({
               className={overlayBtn}
             >
               📋
+            </button>
+          )}
+          {task.assetId && onTogglePinned && (
+            <button
+              type="button"
+              aria-label={task.pinned ? "Unpin asset" : "Pin asset"}
+              title={
+                task.pinned
+                  ? "Unpin — let this asset sort by date again"
+                  : "Pin to the top of the Generated grid"
+              }
+              onClick={(e) => {
+                e.stopPropagation();
+                onTogglePinned();
+              }}
+              className={`${overlayBtn} ${task.pinned ? "text-accent" : ""}`}
+            >
+              📌
             </button>
           )}
           {task.assetId && onToggleHidden && (
@@ -274,11 +296,23 @@ function Tile({
   );
 }
 
+function sortRank(t: TaskRecord): number {
+  if (t.pinned) return 0;
+  if (
+    t.status === "submitting" ||
+    t.status === "queued" ||
+    t.status === "running"
+  )
+    return 1;
+  return 2;
+}
+
 export default function AssetsGallery({
   tasks,
   onReuse,
   onDelete,
   onToggleHidden,
+  onTogglePinned,
   projectId,
   onChanged,
   onUploaded,
@@ -287,6 +321,7 @@ export default function AssetsGallery({
   onReuse: (task: TaskRecord) => void;
   onDelete?: (task: TaskRecord) => void;
   onToggleHidden?: (task: TaskRecord) => void;
+  onTogglePinned?: (task: TaskRecord) => void;
   projectId: string | null;
   onChanged?: () => void;
   onUploaded?: () => void;
@@ -366,8 +401,11 @@ export default function AssetsGallery({
   const selected = tasks.find((t) => t.id === selectedId) || null;
   const visible = showHidden ? tasks : tasks.filter((t) => !t.hidden);
   const hiddenCount = tasks.filter((t) => t.hidden).length;
-  const shown =
-    filter === "all" ? visible : visible.filter((t) => t.kind === filter);
+  const shown = (
+    filter === "all" ? visible : visible.filter((t) => t.kind === filter)
+  )
+    .slice()
+    .sort((a, b) => sortRank(a) - sortRank(b));
 
   useEffect(() => {
     if (!anyActive) return;
@@ -552,6 +590,9 @@ export default function AssetsGallery({
             selected={picked.has(t.id)}
             onToggleHidden={
               onToggleHidden ? () => onToggleHidden(t) : undefined
+            }
+            onTogglePinned={
+              onTogglePinned ? () => onTogglePinned(t) : undefined
             }
             onOpen={() =>
               selecting

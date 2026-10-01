@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import type { Project, ProjectCounts } from "@/lib/types";
 
 type ProjectWithCounts = Project & { counts: ProjectCounts };
@@ -150,6 +151,12 @@ export default function ProjectsLanding() {
             GENFORGE
           </span>
           <span className="text-sm text-muted">Pick a project to open the studio</span>
+          <Link
+            href="/models"
+            className="ml-auto text-sm text-muted hover:text-accent transition-colors"
+          >
+            Models and API keys
+          </Link>
         </div>
       </header>
 

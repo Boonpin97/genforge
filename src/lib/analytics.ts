@@ -2,7 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { listAssets } from "./assets";
-import { listDeletedAssets } from "./spend";
+import { listDeletedAssets, videoDurationSec } from "./spend";
 import type { CostRecord, DirectorRun } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "analytics");
@@ -175,6 +175,8 @@ export async function listCostRecords(
       prompt: a.prompt.slice(0, 100),
       createdAt: a.createdAt,
       estimate: a.estimate ?? null,
+      used: a.used,
+      durationSec: a.kind === "video" ? videoDurationSec(a) : undefined,
     })),
     ...deleted
       .filter((r) => !live.has(r.id))
@@ -186,6 +188,8 @@ export async function listCostRecords(
         createdAt: r.createdAt,
         estimate: r.estimate ?? null,
         deleted: true,
+        used: r.used,
+        durationSec: r.durationSec,
       })),
     ...scopedRuns
       .filter((r) => !r.copied)

@@ -1,60 +1,32 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ApiErrorLike,
-  dashscope,
-  extractError,
-  friendlyError,
-} from "@/lib/dashscope";
-import {
-  APPEARANCE_MODEL,
-  APPEARANCE_SYSTEM_PROMPT,
-  APPEARANCE_VISION_FALLBACK,
-  buildAppearancePrompt,
-  DIRECTOR_MODEL,
-} from "@/lib/director";
+import { ApiErrorLike, errorStatus } from "@/lib/errors";
+import { APPEARANCE_SYSTEM_PROMPT, buildAppearancePrompt } from "@/lib/director";
+import { chat, type ChatContent } from "@/lib/chat";
+import { roleModel } from "@/lib/config";
+import type { ModelEntry } from "@/lib/model-catalog";
 
 export const maxDuration = 60;
 
 type Body = { name?: string; hint?: string; images?: string[] };
 
-async function callAppearance(
-  model: string,
-  textPrompt: string,
-  images: string[]
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const content =
-    images.length
-      ? [
-          ...images.map((url) => ({
-            type: "image_url" as const,
-            image_url: { url },
-          })),
-          { type: "text" as const, text: textPrompt },
-        ]
-      : [{ type: "text" as const, text: textPrompt }];
-  return dashscope("/compatible-mode/v1/chat/completions", {
-    method: "POST",
-    json: {
-      model,
-      messages: [
-        { role: "system", content: APPEARANCE_SYSTEM_PROMPT },
-        { role: "user", content },
-      ],
-      temperature: 0.9,
-      max_tokens: 200,
-    },
-  });
-}
-
-function pickDescription(
-  res: { status: number; body: Record<string, unknown> }
-): string | null {
-  if (res.status !== 200) return null;
-  const out = res.body as {
-    choices?: { message?: { content?: string } }[];
-  };
-  const description = (out.choices?.[0]?.message?.content || "").trim();
-  return description || null;
+function callAppearance(model: ModelEntry, textPrompt: string, images: string[]) {
+  const content: ChatContent = images.length
+    ? [
+        ...images.map((url) => ({
+          type: "image_url" as const,
+          image_url: { url },
+        })),
+        { type: "text" as const, text: textPrompt },
+      ]
+    : textPrompt;
+  return chat(
+    model,
+    [
+      { role: "system", content: APPEARANCE_SYSTEM_PROMPT },
+      { role: "user", content },
+    ],
+    { temperature: 0.9, maxTokens: 200 }
+  );
 }
 
 export async function POST(req: NextRequest) {
@@ -82,78 +54,41 @@ export async function POST(req: NextRequest) {
     const textPrompt = buildAppearancePrompt(name, body.hint);
 
     if (images.length) {
-      const res = await callAppearance(APPEARANCE_MODEL, textPrompt, images);
-      const description = pickDescription(res);
-      if (description) {
-        return NextResponse.json({
-          description: description.slice(0, 600),
-          model: APPEARANCE_MODEL,
-          fallback: false,
-          requestId: (res.body.id as string) || null,
-        });
-      }
-      if (APPEARANCE_VISION_FALLBACK !== APPEARANCE_MODEL) {
-        const res2 = await callAppearance(
-          APPEARANCE_VISION_FALLBACK,
-          textPrompt,
-          images
-        );
-        const description2 = pickDescription(res2);
-        if (description2) {
+      const vision = await roleModel("appearance", { vision: true }).catch(() => null);
+      if (vision) {
+        const res = await callAppearance(vision, textPrompt, images);
+        if (res.ok && res.text)
           return NextResponse.json({
-            description: description2.slice(0, 600),
-            model: APPEARANCE_VISION_FALLBACK,
+            description: res.text.slice(0, 600),
+            model: vision.id,
             fallback: false,
-            requestId: (res2.body.id as string) || null,
+            requestId: res.requestId,
           });
-        }
       }
     }
 
-    const res = await callAppearance(
-      DIRECTOR_MODEL,
-      textPrompt,
-      []
-    );
-    const out = res.body as {
-      id?: string;
-      error?: { code?: string; message?: string };
-      message?: string;
-    };
-    if (res.status !== 200 || out.error || out.message) {
-      const err = friendlyError(
-        out.error?.message
-          ? {
-              code: String(out.error.code || `HTTP_${res.status}`),
-              message: out.error.message,
-              requestId: out.id,
-            }
-          : extractError(res.body)
-      );
-      return NextResponse.json(err, {
-        status: res.status >= 400 ? res.status : 502,
-      });
-    }
-    const description = pickDescription(res);
-    if (!description) {
+    const writer = await roleModel("director");
+    const res = await callAppearance(writer, textPrompt, []);
+    if (!res.ok) return NextResponse.json(res.error, { status: res.status });
+    if (!res.text) {
       return NextResponse.json(
         {
           code: "EmptyResult",
           message: "Model returned no description.",
-          requestId: out.id,
+          requestId: res.requestId || undefined,
         },
         { status: 502 }
       );
     }
     return NextResponse.json({
-      description: description.slice(0, 600),
-      model: DIRECTOR_MODEL,
+      description: res.text.slice(0, 600),
+      model: writer.id,
       fallback: images.length > 0,
-      requestId: out.id || null,
+      requestId: res.requestId,
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {
-      return NextResponse.json(err.toApiError(), { status: 500 });
+      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
     }
     return NextResponse.json(
       {

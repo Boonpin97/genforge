@@ -7,7 +7,8 @@ import {
   qwencloud,
 } from "@/lib/dashscope";
 import { openrouter } from "@/lib/openrouter";
-import { estimateVideoCost } from "@/lib/pricing";
+import { getModel } from "@/lib/config";
+import { estimateVideo } from "@/lib/estimate";
 import type { TaskStatus, VideoUsage } from "@/lib/types";
 
 export const maxDuration = 30;
@@ -62,7 +63,12 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
-  const provider = _req.nextUrl.searchParams.get("provider");
+  const sp = _req.nextUrl.searchParams;
+  const provider = sp.get("provider");
+  const pollModel = sp.get("model") || undefined;
+  const resolution = sp.get("resolution") || undefined;
+  const audioParam = sp.get("audio");
+  const audio = audioParam === null ? undefined : audioParam !== "false";
 
   if (provider === "openrouter") {
     try {
@@ -102,7 +108,15 @@ export async function GET(
         videoUrl: status === "succeeded" ? videoUrl : null,
         usage: null,
         requestId: out.generation_id || out.id || null,
-        estimate: status === "succeeded" && cost !== null ? cost : null,
+        estimate:
+          status !== "succeeded"
+            ? null
+            : cost ??
+              estimateVideo(pollModel ? await getModel(pollModel) : undefined, {
+                seconds: Number(sp.get("duration")) || undefined,
+                resolution,
+                audio,
+              }),
         error:
           status === "failed"
             ? friendlyError({
@@ -132,7 +146,6 @@ export async function GET(
   }
 
   const useQwencloud = provider === "qwencloud";
-  const pollModel = _req.nextUrl.searchParams.get("model") || undefined;
   try {
     const res = useQwencloud
       ? await qwencloud(`/api/v1/tasks/${encodeURIComponent(id)}`)
@@ -160,8 +173,6 @@ export async function GET(
 
     const raw = out.output?.task_status || "UNKNOWN";
     const status: TaskStatus = STATUS_MAP[raw] || "failed";
-    const resolution =
-      _req.nextUrl.searchParams.get("resolution") || undefined;
 
     return NextResponse.json({
       status,
@@ -171,9 +182,10 @@ export async function GET(
       requestId: out.request_id || null,
       estimate:
         status === "succeeded"
-          ? estimateVideoCost(out.usage, resolution, {
-              model: pollModel,
-              provider: useQwencloud ? "qwencloud" : "dashscope",
+          ? estimateVideo(pollModel ? await getModel(pollModel) : undefined, {
+              usage: out.usage,
+              resolution,
+              audio,
             })
           : null,
       error:

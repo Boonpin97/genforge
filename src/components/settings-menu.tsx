@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Btn, IconBtn, Popover, Slider, Toggle } from "./ui";
 import {
   ALERT_CHANNELS,
@@ -88,7 +89,7 @@ export default function SettingsMenu() {
           setOpen((o) => !o);
         }}
         active={open}
-        title="Settings — notifications and volume"
+        title="Settings — notifications, volume, models and keys"
       >
         <span aria-hidden>⚙</span>
       </IconBtn>
@@ -134,6 +135,21 @@ export default function SettingsMenu() {
                 ›
               </span>
             </button>
+            <Link
+              href="/models"
+              onClick={() => setOpen(false)}
+              className="w-full px-3 py-2.5 flex items-center gap-3 text-left hover:bg-panel2 transition-colors"
+            >
+              <span className="flex-1 min-w-0">
+                <span className="block text-sm text-ink">Models and API keys</span>
+                <span className="block text-2xs text-muted">
+                  Choose which models appear, and add keys
+                </span>
+              </span>
+              <span className="text-muted" aria-hidden>
+                ›
+              </span>
+            </Link>
           </div>
         )}
 

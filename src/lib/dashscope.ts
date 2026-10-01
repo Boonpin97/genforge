@@ -1,115 +1,25 @@
-import { promises as fs } from "fs";
-import path from "path";
 import type { ApiError } from "./types";
+import { providerSettings, readConfig } from "./config";
+import { ApiErrorLike } from "./errors";
 
-/**
- * .env.local must win over OS-level environment variables (Next.js gives
- * precedence to pre-existing process.env values, which is the opposite of
- * what a project-local key should do), so we parse it directly.
- */
-let envFileCache: Record<string, string> | null = null;
+export { ApiErrorLike };
 
-export async function localEnv(): Promise<Record<string, string>> {
-  return envFile();
-}
-
-export async function localEnvFresh(): Promise<Record<string, string>> {
-  envFileCache = null;
-  return envFile();
-}
-
-async function envFile(): Promise<Record<string, string>> {
-  if (envFileCache) return envFileCache;
-  const map: Record<string, string> = {};
-  try {
-    const raw = await fs.readFile(path.join(process.cwd(), ".env.local"), "utf8");
-    for (const line of raw.split(/\r?\n/)) {
-      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
-      if (m && m[2] !== "") {
-        map[m[1]] = m[2].replace(/^["']|["']$/g, "");
-      }
-    }
-  } catch {
-    // no .env.local
-  }
-  envFileCache = map;
-  return map;
-}
-
-export function getBaseUrl(): string {
-  return (
-    process.env.DASHSCOPE_BASE_URL || "https://dashscope-intl.aliyuncs.com"
-  ).replace(/\/+$/, "");
+export async function getBaseUrl(): Promise<string> {
+  return (await readConfig()).providers.dashscope.baseUrl;
 }
 
 export async function getApiKey(): Promise<string> {
-  const fromFile = (await envFile()).DASHSCOPE_API_KEY;
-  const key = fromFile || process.env.DASHSCOPE_API_KEY;
-  if (!key) {
-    throw new ApiErrorLike(
-      "MissingConfig",
-      "DASHSCOPE_API_KEY is not set. Add it to .env.local (see .env.example), then restart the dev server."
-    );
-  }
-  return key;
+  return (await providerSettings("dashscope")).apiKey;
 }
 
 export async function isConfigured(): Promise<boolean> {
-  try {
-    await getApiKey();
-    return true;
-  } catch {
-    return false;
-  }
+  return Boolean((await readConfig()).providers.dashscope.apiKey);
 }
 
 export type VideoProvider = "dashscope" | "qwencloud";
 
 export async function getVideoProvider(): Promise<VideoProvider> {
-  const fromFile = (await envFile()).VIDEO_PROVIDER;
-  const v = (fromFile || process.env.VIDEO_PROVIDER || "").toLowerCase();
-  return v === "qwencloud" ? "qwencloud" : "dashscope";
-}
-
-export async function getQwencloudBaseUrl(): Promise<string> {
-  const fromFile = (await envFile()).QWENCLOUD_BASE_URL;
-  return (
-    fromFile ||
-    process.env.QWENCLOUD_BASE_URL ||
-    "https://dashscope-intl.aliyuncs.com"
-  ).replace(/\/+$/, "");
-}
-
-export async function getQwencloudApiKey(): Promise<string> {
-  const fromFile = (await envFile()).QWENCLOUD_API_KEY;
-  const key = fromFile || process.env.QWENCLOUD_API_KEY;
-  if (!key) {
-    throw new ApiErrorLike(
-      "MissingConfig",
-      "VIDEO_PROVIDER=qwencloud but QWENCLOUD_API_KEY is not set. Add it to .env.local (see .env.example), then restart the server."
-    );
-  }
-  return key;
-}
-
-export async function isQwencloudConfigured(): Promise<boolean> {
-  try {
-    await getQwencloudApiKey();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export class ApiErrorLike extends Error {
-  code: string;
-  constructor(code: string, message: string) {
-    super(message);
-    this.code = code;
-  }
-  toApiError(): ApiError {
-    return { code: this.code, message: this.message };
-  }
+  return (await readConfig()).videoProvider;
 }
 
 export type DashResponse = {
@@ -126,8 +36,7 @@ async function serviceFetch(
     headers?: Record<string, string>;
   } = {}
 ): Promise<DashResponse> {
-  const base = svc === "qwencloud" ? await getQwencloudBaseUrl() : getBaseUrl();
-  const key = svc === "qwencloud" ? await getQwencloudApiKey() : await getApiKey();
+  const { apiKey: key, baseUrl: base } = await providerSettings(svc);
   const headers: Record<string, string> = {
     Authorization: `Bearer ${key}`,
     ...(init.json !== undefined ? { "Content-Type": "application/json" } : {}),
@@ -237,9 +146,9 @@ const FRIENDLY_CODES: Record<string, string> = {
   ContentPolicyViolation:
     "Blocked by the provider's content policy — the prompt or an image was considered inappropriate.",
   InvalidApiKey:
-    "The API key was rejected — check DASHSCOPE_API_KEY / OPENROUTER_API_KEY in .env.local and that it matches the region.",
+    "The API key was rejected — check the key on the Models page, and for DashScope that it matches the region of the base URL.",
   "missing_api_key":
-    "No API key was sent to the provider — add it to .env.local and restart the server.",
+    "No API key was sent to the provider — add it on the Models page.",
   unsupported_model:
     "The requested model id is not available on this provider/account right now.",
 };

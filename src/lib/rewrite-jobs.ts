@@ -63,6 +63,7 @@ export async function createRewriteJob(input: {
   inventory: string[];
   sig: string;
   model: string;
+  thinking?: boolean;
   projectId: string | null;
 }): Promise<RewriteJob> {
   return serialize(async () => {
@@ -75,6 +76,7 @@ export async function createRewriteJob(input: {
       inventory: input.inventory,
       sig: input.sig,
       model: input.model,
+      thinking: input.thinking,
       estimate: null,
       createdAt: now,
       updatedAt: now,

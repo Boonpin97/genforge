@@ -1,22 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ApiErrorLike,
-  dashscope,
-  extractError,
-  friendlyError,
-} from "@/lib/dashscope";
-import {
-  buildRewriteUserPrompt,
-  REWRITE_MODEL,
-  REWRITE_SYSTEM_PROMPT,
-} from "@/lib/rewrite";
+import { ApiErrorLike, errorStatus } from "@/lib/errors";
+import { buildRewriteUserPrompt, REWRITE_SYSTEM_PROMPT } from "@/lib/rewrite";
+import { chat } from "@/lib/chat";
+import { getModel, roleModel } from "@/lib/config";
+import { estimateText } from "@/lib/estimate";
 import {
   createRewriteJob,
   latestOpenRewriteJob,
   patchRewriteJob,
 } from "@/lib/rewrite-jobs";
 import { recordDirectorRun } from "@/lib/analytics";
-import { estimateDirectorCost } from "@/lib/pricing";
 import type { RewriteJob } from "@/lib/types";
 
 export const maxDuration = 120;
@@ -25,50 +18,42 @@ type Body = {
   prompt?: string;
   inventory?: unknown;
   sig?: unknown;
+  thinking?: unknown;
   projectId?: string | null;
 };
 
 async function runRewrite(job: RewriteJob): Promise<void> {
   try {
-    const res = await dashscope("/compatible-mode/v1/chat/completions", {
-      method: "POST",
-      json: {
-        model: REWRITE_MODEL,
-        messages: [
-          { role: "system", content: REWRITE_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: buildRewriteUserPrompt(job.prompt, job.inventory),
-          },
-        ],
+    const entry = await getModel(job.model);
+    if (!entry || entry.kind !== "text") {
+      await patchRewriteJob(job.id, {
+        status: "failed",
+        error: `${job.model} is no longer a writing model in the config.`,
+      });
+      return;
+    }
+    const res = await chat(
+      entry,
+      [
+        { role: "system", content: REWRITE_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: buildRewriteUserPrompt(job.prompt, job.inventory),
+        },
+      ],
+      {
         temperature: 0.4,
-        max_tokens: 4000,
-      },
-    });
+        maxTokens: 4000,
+        enableThinking: job.thinking,
+      }
+    );
 
-    const out = res.body as {
-      id?: string;
-      error?: { code?: string; message?: string };
-      message?: string;
-      choices?: { message?: { content?: string } }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-
-    if (res.status !== 200 || out.error || out.message) {
-      const err = friendlyError(
-        out.error?.message
-          ? {
-              code: String(out.error.code || `HTTP_${res.status}`),
-              message: out.error.message,
-              requestId: out.id,
-            }
-          : extractError(res.body)
-      );
-      await patchRewriteJob(job.id, { status: "failed", error: err.message });
+    if (!res.ok) {
+      await patchRewriteJob(job.id, { status: "failed", error: res.error.message });
       return;
     }
 
-    const rewrote = (out.choices?.[0]?.message?.content ?? "").trim();
+    const rewrote = res.text;
     if (!rewrote) {
       await patchRewriteJob(job.id, {
         status: "failed",
@@ -77,13 +62,8 @@ async function runRewrite(job: RewriteJob): Promise<void> {
       return;
     }
 
-    const usage = out.usage
-      ? {
-          input_tokens: out.usage.prompt_tokens,
-          output_tokens: out.usage.completion_tokens,
-        }
-      : null;
-    const estimate = usage ? estimateDirectorCost(usage) : null;
+    const usage = res.usage;
+    const estimate = res.cost ?? estimateText(entry, usage);
 
     await patchRewriteJob(job.id, {
       status: "succeeded",
@@ -92,7 +72,7 @@ async function runRewrite(job: RewriteJob): Promise<void> {
     });
 
     await recordDirectorRun({
-      model: REWRITE_MODEL,
+      model: job.model,
       premise: job.prompt,
       estimate,
       tokens: usage
@@ -141,11 +121,21 @@ export async function POST(req: NextRequest) {
     ? body.inventory.filter((x): x is string => typeof x === "string" && x.trim() !== "")
     : [];
 
+  let model: string;
+  try {
+    model = (await roleModel("rewrite")).id;
+  } catch (err) {
+    if (err instanceof ApiErrorLike)
+      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
+    throw err;
+  }
+
   const job = await createRewriteJob({
     prompt,
     inventory,
     sig: typeof body.sig === "string" ? body.sig : "",
-    model: REWRITE_MODEL,
+    model,
+    thinking: body.thinking === true,
     projectId: typeof body.projectId === "string" ? body.projectId : null,
   });
 

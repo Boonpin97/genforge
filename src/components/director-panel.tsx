@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import MentionTextArea from "./mention-textarea";
-import { Btn, ErrorBox, Field, Panel, Seg } from "./ui";
+import Link from "next/link";
+import { Btn, ErrorBox, Field, Panel, Seg, Select } from "./ui";
 import { alertDone } from "@/lib/notify";
 import { formatSGD } from "@/lib/pricing";
 import type { ApiError, Character } from "@/lib/types";
+import type { PublicTextModel } from "@/lib/model-catalog";
 
 type ScriptEntry = {
   id: string;
@@ -21,16 +23,25 @@ export default function DirectorPanel({
   active,
   slot,
   projectId,
+  models,
+  defaultModel,
 }: {
   active: boolean;
   slot?: HTMLElement | null;
   projectId: string | null;
+  models: PublicTextModel[];
+  defaultModel?: string;
 }) {
   const [premise, setPremise] = useState("");
   const [characters, setCharacters] = useState<Character[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [extraCast, setExtraCast] = useState("");
-  const [model, setModel] = useState("qwen3.8-max");
+  const [modelChoice, setModel] = useState<string | null>(null);
+  const model =
+    models.find((m) => m.id === modelChoice)?.id ??
+    models.find((m) => m.id === defaultModel)?.id ??
+    models[0]?.id ??
+    "";
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [history, setHistory] = useState<ScriptEntry[]>([]);
@@ -507,18 +518,30 @@ export default function DirectorPanel({
 
       <Panel title="Action" step="03">
         <Field label="Writer model">
-          <Seg
-            value={model}
-            onChange={setModel}
-            options={[
-              { value: "qwen3.8-flash", label: "qwen3.8-flash" },
-              { value: "qwen3.8-max", label: "qwen3.8-max" },
-            ]}
-          />
+          {models.length > 0 && models.length <= 3 ? (
+            <Seg
+              value={model}
+              onChange={setModel}
+              options={models.map((m) => ({ value: m.id, label: m.label }))}
+            />
+          ) : models.length > 3 ? (
+            <Select
+              value={model}
+              onChange={setModel}
+              options={models.map((m) => ({ value: m.id, label: m.label }))}
+            />
+          ) : (
+            <Link
+              href="/models"
+              className="flex items-center h-9 px-3 rounded-md border border-line bg-panel2 text-sm text-accent hover:bg-panel2/70"
+            >
+              Enable a writing model on the Models page
+            </Link>
+          )}
         </Field>
         <Btn
           onClick={generate}
-          disabled={!premise.trim()}
+          disabled={!premise.trim() || !model}
           size="lg"
           className="mt-4 w-full"
         >

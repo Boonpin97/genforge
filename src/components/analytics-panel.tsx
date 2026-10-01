@@ -256,16 +256,38 @@ export default function AnalyticsPanel({
 
   const { from, to } = rangeBounds(range, customFrom, customTo);
 
-  const filtered = useMemo(
-    () =>
-      records.filter(
-        (r) =>
-          r.createdAt >= from &&
-          r.createdAt <= to &&
-          (kind === "all" || r.kind === kind)
-      ),
-    [records, from, to, kind]
+  const ranged = useMemo(
+    () => records.filter((r) => r.createdAt >= from && r.createdAt <= to),
+    [records, from, to]
   );
+
+  const filtered = useMemo(
+    () => (kind === "all" ? ranged : ranged.filter((r) => r.kind === kind)),
+    [ranged, kind]
+  );
+
+  const videoValue = useMemo(() => {
+    let spend = 0;
+    let usedSec = 0;
+    let usedN = 0;
+    let videoN = 0;
+    for (const r of ranged) {
+      if (r.kind !== "video") continue;
+      videoN += 1;
+      if (r.estimate) spend += r.estimate;
+      if (r.used) {
+        usedN += 1;
+        if (r.durationSec) usedSec += r.durationSec;
+      }
+    }
+    return {
+      spend,
+      usedN,
+      videoN,
+      usedMin: usedSec / 60,
+      perMin: usedSec > 0 ? spend / (usedSec / 60) : null,
+    };
+  }, [ranged]);
 
   const span = useMemo(() => {
     if (!filtered.length) return null;
@@ -446,6 +468,33 @@ export default function AnalyticsPanel({
             </div>
           </Panel>
 
+          <Panel title="Video cost per used minute">
+            {videoValue.perMin !== null ? (
+              <p className="font-semibold text-xl text-ink tabular-nums">
+                {formatSGD(videoValue.perMin)}
+                <span className="ml-1.5 text-sm font-normal text-muted">
+                  per minute of used video
+                </span>
+              </p>
+            ) : (
+              <p className="text-sm text-muted">
+                No used video in this range yet — copy a generated video file
+                (📋) to mark it as used.
+              </p>
+            )}
+            <p className="mt-2 text-2xs text-muted">
+              {formatSGD(videoValue.spend || null)} spent on{" "}
+              <span className="text-ink">{videoValue.videoN}</span> generated
+              video{videoValue.videoN === 1 ? "" : "s"} ÷{" "}
+              <span className="text-ink">{videoValue.usedMin.toFixed(1)}</span>{" "}
+              min of used video (
+              <span className="text-ink">{videoValue.usedN}</span> marked used).
+              Copying a video file (📋 on its tile or card) marks it as used;
+              the figure counts every generated video&apos;s cost in this range
+              and period, whether you kept it or not.
+            </p>
+          </Panel>
+
           <Panel title={`Usage by ${unit}`}>
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
               <div className="w-52">
@@ -621,6 +670,14 @@ export default function AnalyticsPanel({
                                 deleted
                               </span>
                             )}
+                            {r.used && (
+                              <span
+                                className="rounded-full px-2 py-0.5 text-2xs font-medium text-ok bg-ok/15"
+                                title="You copied this file out — its length counts toward the used-minute figure"
+                              >
+                                used
+                              </span>
+                            )}
                           </span>
                         </td>
                         <td className="py-1.5 pr-3 text-ink/80 max-w-[140px] truncate">
@@ -655,7 +712,9 @@ export default function AnalyticsPanel({
         from rates in src/lib/pricing.ts · failed generations are not expected
         to incur cost · deleting an asset keeps its cost here, since the money
         was already spent (assets deleted before this was added are missing) ·
-        director runs are recorded from now on (earlier ones are missing)
+        director runs are recorded from now on (earlier ones are missing) ·
+        copying a file (📋) marks it used from now on — earlier copies are
+        missing unless the file is still in the clipboard staging folder
       </p>
     </div>
   );

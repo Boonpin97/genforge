@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ApiErrorLike, extractError } from "@/lib/dashscope";
-import { getOpenRouterModel, openrouter } from "@/lib/openrouter";
-import { friendlyError } from "@/lib/dashscope";
-import { estimateOpenRouterImageCost } from "@/lib/pricing";
+import { extractError, friendlyError } from "@/lib/dashscope";
+import { ApiErrorLike, errorStatus } from "@/lib/errors";
+import { openrouter } from "@/lib/openrouter";
+import { requireModel } from "@/lib/config";
+import { checkImage } from "@/lib/policy-check";
+import { estimateImage } from "@/lib/estimate";
 
 export const maxDuration = 300;
 
@@ -56,25 +58,27 @@ export async function POST(req: NextRequest) {
   const refs = (body.images || []).filter(
     (u) => typeof u === "string" && (u.startsWith("data:") || /^https?:\/\//i.test(u))
   );
-  const model =
-    typeof body.model === "string" &&
-    /^[A-Za-z0-9._-]+\/[A-Za-z0-9._:-]+$/.test(body.model)
-      ? body.model
-      : getOpenRouterModel();
-  const n = Math.min(6, Math.max(1, Number(body.n) || 1));
+  const n = Math.max(1, Number(body.n) || 1);
   const text = body.negativePrompt
     ? `${prompt}\nAvoid in the output: ${body.negativePrompt}.`
     : prompt;
   const aspect = aspectFor(body.size);
 
   try {
+    const entry = await requireModel(body.model, "image");
+    if (entry.provider !== "openrouter")
+      throw new ApiErrorLike("BadRequest", `${entry.label} is not an OpenRouter model.`);
+    checkImage(entry, { refs: refs.length, n });
+    const model = entry.id;
     const images: string[] = [];
+    let cost: number | null = null;
     let lastBody: Record<string, unknown> | null = null;
 
     for (let i = 0; i < n; i++) {
       const request: Record<string, unknown> = {
         model,
         modalities: ["image", "text"],
+        usage: { include: true },
         messages: [
           {
             role: "user",
@@ -133,6 +137,8 @@ export async function POST(req: NextRequest) {
           status: res.status >= 400 ? res.status : 502,
         });
       }
+      const c = (res.body.usage as { cost?: unknown } | undefined)?.cost;
+      if (typeof c === "number") cost = (cost ?? 0) + c;
       const urls = (out.choices?.[0]?.message?.images || [])
         .map((im) => im.image_url?.url)
         .filter((u): u is string => Boolean(u));
@@ -161,11 +167,11 @@ export async function POST(req: NextRequest) {
       images,
       usage: null,
       requestId: (lastBody?.id as string) || null,
-      estimate: estimateOpenRouterImageCost(images.length),
+      estimate: cost ?? estimateImage(entry, { count: images.length }),
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {
-      return NextResponse.json(err.toApiError(), { status: 500 });
+      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
     }
     return NextResponse.json(
       {

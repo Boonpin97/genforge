@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import DropZone, {
   AddTile,
   blobToDataUrl,
@@ -23,6 +24,11 @@ import {
 } from "./ui";
 import type { Character, ImageSettings } from "@/lib/types";
 import { charImgUrl } from "@/lib/types";
+import {
+  DEFAULT_MODELS,
+  type ImagePolicy,
+  type PublicImageModel,
+} from "@/lib/model-catalog";
 
 export type ImageItem = {
   id: string;
@@ -36,8 +42,18 @@ export type ImageItem = {
 
 export type ImageSubmitPayload = ImageSettings;
 
-const MAX_IMAGES = 3;
-const MAX_BYTES = 10 * 1024 * 1024;
+const FALLBACK_POLICY = (
+  DEFAULT_MODELS.find((m) => m.kind === "image") as { policy: ImagePolicy }
+).policy;
+
+const SIZE_LABELS: Record<string, string> = {
+  auto: "Auto (model decides)",
+  "1333*750": "16:9 · 1333×750",
+  "750*1333": "9:16 · 750×1333",
+  "1155*866": "4:3 · 1155×866",
+  "866*1155": "3:4 · 866×1155",
+  "1000*1000": "1:1 · 1000×1000",
+};
 
 let idCounter = 0;
 const nextId = () => `i${Date.now()}-${idCounter++}`;
@@ -48,27 +64,51 @@ export default function ImagePanel({
   onSavePrompt,
   reuse,
   projectId,
+  models,
 }: {
   onSubmit: (payload: ImageSubmitPayload) => Promise<boolean>;
   promptInjection?: { text: string; nonce: number } | null;
   onSavePrompt?: (text: string) => Promise<boolean>;
   reuse: { settings: ImageSettings; nonce: number } | null;
   projectId: string | null;
+  models: PublicImageModel[];
 }) {
   const [prompt, setPrompt] = useState("");
   const [negativePrompt, setNegativePrompt] = useState("");
-  const [model, setModel] = useState("qwen-image-3.0");
+  const [modelChoice, setModel] = useState("qwen-image-3.0");
   const [size, setSize] = useState("1333*750");
   const [n, setN] = useState(1);
   const [promptExtend, setPromptExtend] = useState(false);
   const [watermark, setWatermark] = useState(false);
   const [seed, setSeed] = useState("");
-  const [customModel, setCustomModel] = useState("");
   const [items, setItems] = useState<ImageItem[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   const [preparing, setPreparing] = useState(false);
 
   const loading = items.some((i) => i.state === "loading");
+  const entry = models.find((m) => m.id === modelChoice) ?? models[0] ?? null;
+  const model = entry?.id ?? modelChoice;
+  const policy = entry?.policy ?? FALLBACK_POLICY;
+  const MAX_IMAGES = policy.maxRefs;
+  const MAX_BYTES = policy.maxRefMB * 1024 * 1024;
+  const overRefs = Math.max(0, items.length - MAX_IMAGES);
+
+  useEffect(() => {
+    if (!models.length || models.some((m) => m.id === modelChoice)) return;
+    const raf = requestAnimationFrame(() => setModel(models[0].id));
+    return () => cancelAnimationFrame(raf);
+  }, [models, modelChoice]);
+
+  const sizesKey = policy.sizes.join("|");
+  const maxN = policy.maxN;
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      const sizes = sizesKey.split("|");
+      setSize((cur) => (sizes.includes(cur) ? cur : sizes[0]));
+      setN((cur) => Math.min(cur, maxN));
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [sizesKey, maxN]);
 
   const itemsRef = useRef(items);
   useEffect(() => {
@@ -98,7 +138,6 @@ export default function ImagePanel({
     setPrompt(s.prompt);
     setNegativePrompt(s.negativePrompt || "");
     setModel(s.model);
-    setCustomModel(s.model.includes("/") ? s.model : "");
     setSize(s.size);
     setN(s.n);
     setPromptExtend(s.promptExtend);
@@ -167,11 +206,15 @@ export default function ImagePanel({
         continue;
       }
       if (count >= MAX_IMAGES) {
-        setNotice(`At most ${MAX_IMAGES} reference images`);
+        setNotice(
+          MAX_IMAGES
+            ? `At most ${MAX_IMAGES} reference images`
+            : `${entry?.label ?? "This model"} does not take reference images`
+        );
         continue;
       }
       if (file.size > MAX_BYTES) {
-        setNotice(`${file.name}: image exceeds 10MB limit`);
+        setNotice(`${file.name}: image exceeds ${policy.maxRefMB}MB limit`);
         continue;
       }
       count++;
@@ -228,6 +271,18 @@ export default function ImagePanel({
 
   async function handleSubmit() {
     setNotice(null);
+    if (!entry) {
+      setNotice("No image model is ready — enable one on the Models page");
+      return;
+    }
+    if (overRefs) {
+      setNotice(
+        MAX_IMAGES
+          ? `${entry.label} takes ${MAX_IMAGES} reference images — remove ${overRefs}`
+          : `${entry.label} does not take reference images — remove them or switch model`
+      );
+      return;
+    }
     if (!prompt.trim()) {
       setNotice("Enter a prompt");
       return;
@@ -283,6 +338,7 @@ export default function ImagePanel({
           return;
         }
         const n = Math.min(MAX_IMAGES - working.length, refs.length);
+        if (MAX_IMAGES === 0) continue;
         if (n <= 0) {
           setNotice(
             `Reference slots full (max ${MAX_IMAGES}) — cannot add ${c.name} images`
@@ -316,7 +372,7 @@ export default function ImagePanel({
         kind: "image",
         prompt: finalPrompt,
         userPrompt: text,
-        model: customModel.trim() || model,
+        model,
         images: readyNow.map((i) => ({
           name: i.name,
           url: i.dataUrl!,
@@ -324,10 +380,10 @@ export default function ImagePanel({
         })),
         size,
         n,
-        negativePrompt: negativePrompt.trim() || undefined,
-        promptExtend,
-        watermark,
-        seed: seedNum,
+        negativePrompt: policy.negativePrompt ? negativePrompt.trim() || undefined : undefined,
+        promptExtend: policy.promptExtend && promptExtend,
+        watermark: policy.watermark && watermark,
+        seed: policy.seed ? seedNum : undefined,
       });
     } finally {
       setPreparing(false);
@@ -370,6 +426,7 @@ export default function ImagePanel({
                 </button>
               )}
         </div>
+        {policy.negativePrompt && (
         <div className="mt-3">
           <Field label="Negative prompt" hint="Optional, up to 500 characters">
             <TextInput
@@ -380,14 +437,28 @@ export default function ImagePanel({
             />
           </Field>
         </div>
+        )}
       </Panel>
 
       <Panel title="Reference images" step="02">
-        {items.length === 0 && (
+        {items.length === 0 && MAX_IMAGES === 0 && (
+          <p className="text-sm text-muted">
+            {entry?.label ?? "This model"} works from the prompt only. Characters
+            you mention are described in text.
+          </p>
+        )}
+        {overRefs > 0 && (
+          <p className="mb-3 text-xs text-danger">
+            {MAX_IMAGES
+              ? `${entry?.label} takes ${MAX_IMAGES} reference images — remove ${overRefs}.`
+              : `${entry?.label} does not take reference images — remove them or switch model.`}
+          </p>
+        )}
+        {items.length === 0 && MAX_IMAGES > 0 && (
           <DropZone
             accept="image/*"
             title="Drop images"
-            hint={`Or click to browse, or drag one in from the gallery. 1–${MAX_IMAGES} images, jpg/png/bmp/webp up to 10MB.`}
+            hint={`Or click to browse, or drag one in from the gallery. Up to ${MAX_IMAGES} images, JPG, PNG, BMP or WEBP up to ${policy.maxRefMB}MB.`}
             onFiles={handleFiles}
             onAssetDrop={handleAssetDrop}
           />
@@ -450,71 +521,80 @@ export default function ImagePanel({
 
       <Panel title="Output settings" step="03">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Model">
-            <Seg
-              value={model}
-              onChange={setModel}
-              options={[
-                { value: "qwen-image-3.0-pro", label: "Qwen Pro" },
-                { value: "qwen-image-3.0", label: "Qwen Fast" },
-                { value: "google/gemini-3.1-flash-image", label: "Nano Banana" },
-              ]}
-            />
+          <Field label="Model" hint={entry ? undefined : "none enabled"}>
+            {models.length > 0 && models.length <= 3 ? (
+              <Seg
+                value={model}
+                onChange={setModel}
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+              />
+            ) : models.length > 3 ? (
+              <Select
+                value={model}
+                onChange={setModel}
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+              />
+            ) : (
+              <Link
+                href="/models"
+                className="flex items-center h-9 px-3 rounded-md border border-line bg-panel2 text-sm text-accent hover:bg-panel2/70"
+              >
+                Enable an image model on the Models page
+              </Link>
+            )}
           </Field>
           <Field label="Aspect ratio" hint="Standard 1K">
             <Select
               value={size}
               onChange={setSize}
-              options={[
-                { value: "auto", label: "Auto (model decides)" },
-                { value: "1333*750", label: "16:9 · 1333×750" },
-                { value: "750*1333", label: "9:16 · 750×1333" },
-                { value: "1155*866", label: "4:3 · 1155×866" },
-                { value: "866*1155", label: "3:4 · 866×1155" },
-                { value: "1000*1000", label: "1:1 · 1000×1000" },
-              ]}
+              options={policy.sizes.map((v) => ({
+                value: v,
+                label: SIZE_LABELS[v] || v.replace("*", "×"),
+              }))}
             />
           </Field>
-          <div className="sm:col-span-2">
-            <Field
-              label="Custom model"
-              hint="Optional — overrides the choice above"
-            >
-              <input
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="Any OpenRouter id, e.g. google/gemini-3-pro-image"
-                className="w-full h-9 bg-panel2 border border-line rounded-md px-3 text-xs font-mono text-ink placeholder:text-muted/60 outline-none focus:border-accent/50 transition-colors"
-              />
-            </Field>
-          </div>
-          <Field label="Images" hint="1–6">
+          <Field label="Images" hint={`1–${policy.maxN}`}>
             <Seg
               value={String(n)}
               onChange={(v) => setN(Number(v))}
-              options={["1", "2", "3", "4", "5", "6"].map((v) => ({ value: v, label: v }))}
+              options={Array.from({ length: policy.maxN }, (_, i) => String(i + 1)).map(
+                (v) => ({ value: v, label: v })
+              )}
             />
           </Field>
-          <Field label="Seed" hint="Optional">
-            <TextInput
-              value={seed}
-              onChange={(e) => setSeed(e.target.value)}
-              placeholder="random"
-              inputMode="numeric"
-            />
-          </Field>
-          <div className="sm:col-span-2 flex flex-wrap gap-x-6 gap-y-3">
-            <Toggle
-              checked={promptExtend}
-              onChange={setPromptExtend}
-              label="Prompt rewrite"
-            />
-            <Toggle
-              checked={watermark}
-              onChange={setWatermark}
-              label='"Qwen-Image" watermark'
-            />
-          </div>
+          {policy.seed && (
+            <Field label="Seed" hint="Optional">
+              <TextInput
+                value={seed}
+                onChange={(e) => setSeed(e.target.value)}
+                placeholder="random"
+                inputMode="numeric"
+              />
+            </Field>
+          )}
+          {(policy.promptExtend || policy.watermark) && (
+            <div className="sm:col-span-2 flex flex-wrap gap-x-6 gap-y-3">
+              {policy.promptExtend && (
+                <Toggle
+                  checked={promptExtend}
+                  onChange={setPromptExtend}
+                  label="Prompt rewrite"
+                />
+              )}
+              {policy.watermark && (
+                <Toggle
+                  checked={watermark}
+                  onChange={setWatermark}
+                  label='"Qwen-Image" watermark'
+                />
+              )}
+            </div>
+          )}
+          {entry?.notes && (
+            <p className="sm:col-span-2 text-2xs text-muted leading-snug">
+              {entry.notes}
+            </p>
+          )}
         </div>
       </Panel>
 

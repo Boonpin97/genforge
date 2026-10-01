@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import Link from "next/link";
 import VideoPanel, { type VideoSubmitPayload } from "./video-panel";
 import ImagePanel, { type ImageSubmitPayload } from "./image-panel";
@@ -12,11 +19,15 @@ import AssetsGallery from "./assets-gallery";
 import UploadsGallery from "./uploads-gallery";
 import PromptsGallery from "./prompts-gallery";
 import { blobToDataUrl } from "./drop-zone";
-import {
-  estimateOpenRouterVideoCost,
-  formatSGD,
-} from "@/lib/pricing";
+import { formatSGD } from "@/lib/pricing";
 import { alertDone } from "@/lib/notify";
+import type {
+  ImageModel,
+  PublicModel,
+  Roles,
+  TextModel,
+  VideoModel,
+} from "@/lib/model-catalog";
 import type {
   ApiError,
   AssetRefMeta,
@@ -62,6 +73,7 @@ function assetToTask(a: StoredAsset): TaskRecord {
     estimate: a.estimate,
     params: a.params,
     hidden: a.hidden,
+    pinned: a.pinned,
   };
   if (a.kind === "video") {
     const settings: VideoSettings = {
@@ -152,6 +164,8 @@ export default function Studio({
   const [videoProvider, setVideoProvider] = useState<"dashscope" | "qwencloud">(
     "dashscope"
   );
+  const [models, setModels] = useState<PublicModel[]>([]);
+  const [roles, setRoles] = useState<Roles | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
   const [videoReuse, setVideoReuse] = useState<{
     settings: VideoSettings;
@@ -381,14 +395,41 @@ export default function Studio({
   }, [tasks]);
 
   useEffect(() => {
-    fetch("/api/config")
-      .then((r) => r.json())
-      .then((d) => {
-        setConfigured(Boolean(d.configured));
-        if (d.videoProvider === "qwencloud") setVideoProvider("qwencloud");
-      })
-      .catch(() => setConfigured(false));
+    let alive = true;
+    const load = () =>
+      fetch("/api/config", { cache: "no-store" })
+        .then((r) => r.json())
+        .then((d) => {
+          if (!alive) return;
+          setConfigured(Boolean(d.configured));
+          setVideoProvider(d.videoProvider === "qwencloud" ? "qwencloud" : "dashscope");
+          setModels(Array.isArray(d.models) ? d.models : []);
+          if (d.roles) setRoles(d.roles);
+        })
+        .catch(() => alive && setConfigured(false));
+    void load();
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void load();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      alive = false;
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, []);
+
+  const videoModels = useMemo(
+    () => models.filter((m): m is PublicModel & VideoModel => m.kind === "video"),
+    [models]
+  );
+  const imageModels = useMemo(
+    () => models.filter((m): m is PublicModel & ImageModel => m.kind === "image"),
+    [models]
+  );
+  const textModels = useMemo(
+    () => models.filter((m): m is PublicModel & TextModel => m.kind === "text"),
+    [models]
+  );
 
   const loadAssets = useCallback(() => {
     fetch(`/api/assets?project=${projectId === null ? "none" : projectId}`)
@@ -556,6 +597,10 @@ export default function Studio({
         if (task.params && typeof task.params.resolution === "string")
           qs.set("resolution", task.params.resolution);
         qs.set("model", task.model);
+        if (typeof task.params?.duration === "number")
+          qs.set("duration", String(task.params.duration));
+        if (typeof task.params?.audio === "boolean")
+          qs.set("audio", String(task.params.audio));
         if (task.model.includes("/")) qs.set("provider", "openrouter");
         else if (videoProvider === "qwencloud") qs.set("provider", "qwencloud");
         const q = qs.size ? `?${qs.toString()}` : "";
@@ -577,18 +622,6 @@ export default function Studio({
           requestId: data.requestId || task.requestId,
           error: data.error || (data.status === "failed" ? { code: "Failed", message: "Task failed" } : undefined),
         };
-        if (
-          data.status === "succeeded" &&
-          patch.estimate == null &&
-          task.model.includes("/")
-        )
-          patch.estimate =
-            estimateOpenRouterVideoCost(
-              Number(task.params?.duration) || 0,
-              typeof task.params?.resolution === "string"
-                ? task.params.resolution
-                : undefined
-            ) ?? undefined;
         updateTask(task.id, patch);
         if (
           (patch.status === "succeeded" || patch.status === "failed") &&
@@ -705,9 +738,12 @@ export default function Studio({
                     images: payload.media
                       .filter((m) => m.type === "reference_image")
                       .map((m) => m.url || m.previewUrl),
+                    firstFrame: payload.media.find((m) => m.type === "first_frame")?.url,
+                    lastFrame: payload.media.find((m) => m.type === "last_frame")?.url,
                     duration: payload.duration,
                     ratio: payload.ratio,
                     resolution: payload.resolution,
+                    audio: payload.audio,
                   }
                 : {
                     prompt: payload.prompt,
@@ -717,9 +753,10 @@ export default function Studio({
                     duration: payload.duration,
                     audio: payload.audio,
                     watermark: payload.watermark,
-                    media: payload.media.map(({ type, url }) => ({
+                    media: payload.media.map(({ type, url, durationSec }) => ({
                       type,
                       url,
+                      durationSec,
                     })),
                   }
             ),
@@ -914,6 +951,20 @@ export default function Studio({
     }).catch(() => {});
   }, []);
 
+  const togglePinned = useCallback((task: TaskRecord) => {
+    if (!task.assetId) return;
+    const next = !task.pinned;
+    const apply = (l: TaskRecord[]) =>
+      l.map((t) => (t.id === task.id ? { ...t, pinned: next } : t));
+    setTasks(apply);
+    setAssets(apply);
+    void fetch(`/api/assets/${task.assetId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pinned: next }),
+    }).catch(() => {});
+  }, []);
+
   const removeAsset = useCallback((task: TaskRecord) => {
     setTasks((l) => l.filter((t) => t.id !== task.id));
     setAssets((l) => l.filter((t) => t.id !== task.id));
@@ -966,8 +1017,8 @@ export default function Studio({
               className="flex items-center gap-2 text-muted h-8 px-1"
               title={
                 configured === false
-                  ? "DASHSCOPE_API_KEY missing in .env.local"
-                  : "API key configured"
+                  ? "No model is enabled with an API key — open the Models page"
+                  : `${models.length} models ready`
               }
             >
               <span
@@ -981,9 +1032,9 @@ export default function Studio({
               />
               <span className="hidden md:inline">
                 {configured === null
-                  ? "Checking key"
+                  ? "Checking keys"
                   : configured
-                    ? "Key ready"
+                    ? "Keys ready"
                     : "No API key"}
               </span>
             </span>
@@ -1009,12 +1060,14 @@ export default function Studio({
         >
           {configured === false && (
             <div className="border border-danger/35 bg-danger/10 rounded-lg p-3.5 text-sm text-ink">
-              <p className="font-semibold text-danger mb-1">No API key found</p>
+              <p className="font-semibold text-danger mb-1">No model is ready</p>
               <p className="text-ink/90">
-                Set <code className="font-mono text-xs">DASHSCOPE_API_KEY</code> in{" "}
-                <code className="font-mono text-xs">.env.local</code> (copy{" "}
-                <code className="font-mono text-xs">.env.example</code>), then
-                restart the dev server.
+                Add an API key and enable at least one model on the{" "}
+                <Link href="/models" className="text-accent underline underline-offset-2">
+                  Models page
+                </Link>
+                . Keys are saved to{" "}
+                <code className="font-mono text-xs">genforge.config.json</code>.
               </p>
             </div>
           )}
@@ -1057,7 +1110,7 @@ export default function Studio({
               onSavePrompt={(text) => savePrompt("video", text)}
               reuse={videoReuse}
               projectId={projectId}
-              videoProvider={videoProvider}
+              models={videoModels}
             />
           </div>
           <div className={tab === "image" ? "block" : "hidden"}>
@@ -1067,6 +1120,7 @@ export default function Studio({
               onSavePrompt={(text) => savePrompt("image", text)}
               reuse={imageReuse}
               projectId={projectId}
+              models={imageModels}
             />
           </div>
           <div className={tab === "characters" ? "block" : "hidden"}>
@@ -1077,6 +1131,8 @@ export default function Studio({
               active={tab === "director"}
               slot={directorSlot}
               projectId={projectId}
+              models={textModels}
+              defaultModel={roles?.director}
             />
           </div>
           <div className={tab === "analytics" ? "block" : "hidden"}>
@@ -1180,6 +1236,7 @@ export default function Studio({
                     onReuse={reuseSettings}
                     onDelete={removeAsset}
                     onToggleHidden={toggleHidden}
+                    onTogglePinned={togglePinned}
                     projectId={projectId}
                     onChanged={loadAssets}
                     onUploaded={() => {
@@ -1198,9 +1255,12 @@ export default function Studio({
       <footer className="border-t border-line-soft py-4 mt-2">
         <p className="px-4 sm:px-6 text-2xs text-muted max-w-[90ch]">
           Cost figures are estimates, converted to SGD at a fixed 1.3 × USD. Adjust
-          the rates in <code className="font-mono">src/lib/pricing.ts</code>. Usage
-          data comes from the DashScope API, and result links expire 24 hours after
-          generation.
+          each model&apos;s rates on the{" "}
+          <Link href="/models" className="text-accent underline underline-offset-2">
+            Models page
+          </Link>
+          . Where the provider reports the actual charge (OpenRouter), that is used
+          instead. Result links expire 24 hours after generation.
         </p>
       </footer>
     </div>

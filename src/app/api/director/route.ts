@@ -1,20 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ApiErrorLike,
-  dashscope,
-  extractError,
-  friendlyError,
-} from "@/lib/dashscope";
-import {
-  buildUserPrompt,
-  DIRECTOR_MODEL,
-  DIRECTOR_MODELS,
-  getSystemPrompt,
-} from "@/lib/director";
+import { ApiErrorLike, errorStatus } from "@/lib/errors";
+import { buildUserPrompt, getSystemPrompt } from "@/lib/director";
+import { chat } from "@/lib/chat";
+import { requireModel, roleModel } from "@/lib/config";
+import { estimateText } from "@/lib/estimate";
 import { listCharacters } from "@/lib/characters";
 import { listDirectorScripts, recordDirectorRun } from "@/lib/analytics";
 import { parseProjectParam } from "@/lib/projects";
-import { estimateDirectorCost } from "@/lib/pricing";
 
 export const maxDuration = 300;
 
@@ -61,78 +53,51 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const model =
-    typeof body.model === "string" &&
-    (DIRECTOR_MODELS as readonly string[]).includes(body.model)
-      ? body.model
-      : DIRECTOR_MODEL;
-
   try {
+    const entry = body.model
+      ? await requireModel(body.model, "text")
+      : await roleModel("director");
+    const model = entry.id;
     const all = await listCharacters();
     const wanted = new Set(body.characterIds || []);
     const characters = all.filter((c) => wanted.has(c.id));
 
-    const res = await dashscope("/compatible-mode/v1/chat/completions", {
-      method: "POST",
-      json: {
-        model,
-        messages: [
-          { role: "system", content: getSystemPrompt() },
-          {
-            role: "user",
-                content: buildUserPrompt({
-                  premise,
-                  characters,
-                  extraCast: body.extraCast,
-                  baseScript: baseScript || undefined,
-                  instruction: instruction || undefined,
-                }),
-          },
-        ],
-        temperature: 0.9,
-        max_tokens: 8000,
-      },
-    });
+    const res = await chat(
+      entry,
+      [
+        { role: "system", content: getSystemPrompt() },
+        {
+          role: "user",
+          content: buildUserPrompt({
+            premise,
+            characters,
+            extraCast: body.extraCast,
+            baseScript: baseScript || undefined,
+            instruction: instruction || undefined,
+          }),
+        },
+      ],
+      { temperature: 0.9, maxTokens: 8000 }
+    );
 
-    const out = res.body as {
-      id?: string;
-      error?: { code?: string; message?: string };
-      message?: string;
-      choices?: { message?: { content?: string } }[];
-      usage?: { prompt_tokens?: number; completion_tokens?: number };
-    };
-
-    if (res.status !== 200 || out.error || out.message) {
-      const err = friendlyError(
-        out.error?.message
-          ? {
-              code: String(out.error.code || `HTTP_${res.status}`),
-              message: out.error.message,
-              requestId: out.id,
-            }
-          : extractError(res.body)
-      );
-      return NextResponse.json(err, {
-        status: res.status >= 400 ? res.status : 502,
-      });
+    if (!res.ok) {
+      return NextResponse.json(res.error, { status: res.status });
     }
 
-    const script = out.choices?.[0]?.message?.content ?? "";
-    if (!script.trim()) {
+    const script = res.text;
+    if (!script) {
       return NextResponse.json(
         {
           code: "EmptyResult",
           message: "Model returned success but no script text.",
-          requestId: out.id,
+          requestId: res.requestId || undefined,
         },
         { status: 502 }
       );
     }
 
-    const usage = out.usage
-      ? { input_tokens: out.usage.prompt_tokens, output_tokens: out.usage.completion_tokens }
-      : null;
-    const estimate = usage ? estimateDirectorCost(usage) : null;
+    const usage = res.usage;
+    const estimate = res.cost ?? estimateText(entry, usage);
 
     const runId = await recordDirectorRun({
       model,
@@ -152,11 +117,11 @@ export async function POST(req: NextRequest) {
       model,
       usage,
       estimate,
-      requestId: out.id || null,
+      requestId: res.requestId,
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {
-      return NextResponse.json(err.toApiError(), { status: 500 });
+      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
     }
     return NextResponse.json(
       {

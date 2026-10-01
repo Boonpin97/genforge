@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { spawn } from "child_process";
 import fs from "fs/promises";
 import path from "path";
-import { getAssetFileMeta, listAssets } from "@/lib/assets";
+import { getAssetFileMeta, listAssets, setAssetUsed } from "@/lib/assets";
 
 export const runtime = "nodejs";
 
@@ -131,5 +131,6 @@ export async function POST(
       { status: 500 }
     );
   }
+  await setAssetUsed(id).catch(() => {});
   return NextResponse.json({ ok: true, filename: path.basename(target) });
 }

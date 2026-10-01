@@ -1,18 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import {
-  ApiErrorLike,
   extractError,
   getVideoProvider,
   hasOssMedia,
   videoService,
 } from "@/lib/dashscope";
+import { ApiErrorLike, errorStatus } from "@/lib/errors";
+import { requireModel } from "@/lib/config";
+import { checkVideo } from "@/lib/policy-check";
 import type { MediaPayload, MediaType } from "@/lib/types";
 
 export const maxDuration = 60;
 
-const VIDEO_MODELS = ["wan3.0-video", "wan3.0-video-prime"];
-const RESOLUTIONS = ["480P", "720P", "1080P"];
-const RATIOS = ["adaptive", "16:9", "4:3", "1:1", "3:4", "9:16"];
 const REFERENCE_TYPES: MediaType[] = [
   "reference_image",
   "reference_video",
@@ -72,10 +71,23 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const model = VIDEO_MODELS.includes(body.model || "") ? body.model! : "wan3.0-video";
-  const provider = await getVideoProvider();
-
   try {
+    const entry = await requireModel(body.model, "video");
+    if (entry.provider !== "alibaba")
+      throw new ApiErrorLike("BadRequest", `${entry.label} is an OpenRouter model.`);
+    const model = entry.id;
+    const provider = await getVideoProvider();
+    const policy = entry.policy;
+    checkVideo(entry, {
+      duration: body.duration,
+      resolution: body.resolution,
+      ratio: body.ratio,
+      media,
+      refVideoSec: media
+        .filter((m) => m.type === "reference_video")
+        .reduce((s, m) => s + (Number(m.durationSec) || 0), 0),
+    });
+
     const input: Record<string, unknown> = {};
     if (prompt) input.prompt = prompt;
     if (media.length) {
@@ -83,20 +95,14 @@ export async function POST(req: NextRequest) {
     }
 
     const parameters: Record<string, unknown> = {
-      resolution: RESOLUTIONS.includes(body.resolution || "")
-        ? body.resolution
-        : "1080P",
-      ratio: RATIOS.includes(body.ratio || "") ? body.ratio : "adaptive",
+      resolution: body.resolution || policy.resolutions[policy.resolutions.length - 1],
+      ratio: body.ratio || policy.ratios[0],
       prompt_extend: body.promptExtend === true,
-      watermark: Boolean(body.watermark),
+      watermark: policy.watermark && Boolean(body.watermark),
     };
-    if (typeof body.duration === "number" && body.duration >= 2 && body.duration <= 30) {
-      parameters.duration = body.duration;
-    } else if (body.duration === -1) {
-      parameters.duration = -1;
-    }
-    if (typeof body.audio === "boolean") parameters.audio = body.audio;
-    if (typeof body.seed === "number") parameters.seed = body.seed;
+    if (typeof body.duration === "number") parameters.duration = body.duration;
+    if (typeof body.audio === "boolean") parameters.audio = policy.audio && body.audio;
+    if (typeof body.seed === "number" && policy.seed) parameters.seed = body.seed;
 
     const headers: Record<string, string> = {
       "X-DashScope-Async": "enable",
@@ -135,7 +141,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {
-      return NextResponse.json(err.toApiError(), { status: 500 });
+      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
     }
     return NextResponse.json(
       {

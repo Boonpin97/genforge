@@ -1,14 +1,5 @@
 import type { Character } from "./types";
 
-export const DIRECTOR_MODEL = process.env.DIRECTOR_MODEL || "qwen3.8-max";
-
-export const DIRECTOR_MODELS = ["qwen3.8-flash", "qwen3.8-max"] as const;
-
-export const APPEARANCE_MODEL =
-  process.env.APPEARANCE_MODEL || "qwen3-vl-flash";
-
-export const APPEARANCE_VISION_FALLBACK = "qwen3-vl-flash";
-
 export const DIRECTOR_SYSTEM_PROMPT = `You are Director, an expert screenwriter who turns short premises into storyboard scripts in the user's exact house style.
 
 STORYBOARD FORMAT RULES (follow strictly):

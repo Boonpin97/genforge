@@ -325,6 +325,30 @@ export async function setAssetHidden(
   return true;
 }
 
+export async function setAssetPinned(
+  id: string,
+  pinned: boolean
+): Promise<boolean> {
+  const list = await readIndex();
+  const asset = list.find((a) => a.id === id);
+  if (!asset) return false;
+  if (pinned) asset.pinned = true;
+  else delete asset.pinned;
+  await writeIndex(list);
+  return true;
+}
+
+export async function setAssetUsed(id: string): Promise<boolean> {
+  const list = await readIndex();
+  const asset = list.find((a) => a.id === id);
+  if (!asset) return false;
+  if (!asset.used) {
+    asset.used = true;
+    await writeIndex(list);
+  }
+  return true;
+}
+
 export async function deleteAsset(id: string): Promise<boolean> {
   if (!ID_RE.test(id)) return false;
   const list = await readIndex();

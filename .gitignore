@@ -34,8 +34,10 @@ yarn-error.log*
 .env
 .env.local
 .env.*.local
-# keep the example (placeholders only) committed
-!.env.example
+
+# app config — holds provider API keys; genforge.config.example.json is the template
+/genforge.config.json
+/genforge.config.json.tmp
 
 # character library data (saved reference media / voice)
 /data

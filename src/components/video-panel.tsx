@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import DropZone, {
   AddTile,
   blobToDataUrl,
@@ -32,6 +33,15 @@ import type {
   VideoSettings,
 } from "@/lib/types";
 import { charAudioUrl, charImgUrl } from "@/lib/types";
+import {
+  DEFAULT_MODELS,
+  durationBounds,
+  orderedResolution,
+  snapDuration,
+  type DurationPolicy,
+  type PublicVideoModel,
+  type VideoPolicy,
+} from "@/lib/model-catalog";
 
 export type MediaItem = {
   id: string;
@@ -48,19 +58,39 @@ export type MediaItem = {
 
 export type VideoSubmitPayload = VideoSettings;
 
-const MAX_IMAGES = 10;
-const MAX_VIDEOS = 5;
-const MAX_VIDEO_TOTAL_SEC = 15;
-const MAX_AUDIO_SEC = 15;
-const TOTAL_BUDGET_SEC = 30;
-const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
-const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+const MB = 1024 * 1024;
+const FALLBACK_POLICY = (
+  DEFAULT_MODELS.find((m) => m.kind === "video") as { policy: VideoPolicy }
+).policy;
 const SHORT_PROMPT_WARN_CHARS = 200;
 const IMAGE_EXT = /\.(jpe?g|png|bmp|webp)$/i;
 const AUDIO_EXT = /\.(mp3|wav|m4a|aac|ogg)$/i;
 
 const PREVIEWABLE = /^(data:|blob:|https?:)/i;
+
+function acceptFor(img: number, vid: number, aud: number): string {
+  return [
+    img ? "image/*" : "",
+    vid ? "video/mp4,video/quicktime,.mp4,.mov" : "",
+    aud ? "audio/*,.mp3,.wav,.m4a" : "",
+  ]
+    .filter(Boolean)
+    .join(",");
+}
+
+function kindsLabel(img: number, vid: number, aud: number): string {
+  const k = [img ? "images" : "", vid ? "video" : "", aud ? "audio" : ""].filter(Boolean);
+  return k.length > 1 ? `${k.slice(0, -1).join(", ")} or ${k[k.length - 1]}` : k[0] || "media";
+}
+
+function refHint(r: VideoPolicy["refs"]): string {
+  const parts: string[] = [];
+  if (r.maxImages) parts.push(`${r.maxImages} image${r.maxImages === 1 ? "" : "s"}`);
+  if (r.maxVideos)
+    parts.push(`${r.maxVideos} video${r.maxVideos === 1 ? "" : "s"} (${r.maxVideoTotalSec}s combined)`);
+  if (r.maxAudio) parts.push(`audio (first ${r.maxAudioSec}s used)`);
+  return parts.length ? `Up to ${parts.join(", ")}.` : "";
+}
 
 let idCounter = 0;
 const nextId = () => `m${Date.now()}-${idCounter++}`;
@@ -71,22 +101,24 @@ export default function VideoPanel({
   onSavePrompt,
   reuse,
   projectId,
-  videoProvider = "dashscope",
+  models,
 }: {
   onSubmit: (payload: VideoSubmitPayload) => Promise<boolean>;
   promptInjection?: { text: string; nonce: number } | null;
   onSavePrompt?: (text: string) => Promise<boolean>;
   reuse: { settings: VideoSettings; nonce: number } | null;
   projectId: string | null;
-  videoProvider?: "dashscope" | "qwencloud";
+  models: PublicVideoModel[];
 }) {
   const [prompt, setPrompt] = useState("");
   const [rewrote, setRewrote] = useState("");
   const [promptTab, setPromptTab] = useState<"prompt" | "rewritten">("prompt");
   const [rewriting, setRewriting] = useState(false);
   const [rewriteJobId, setRewriteJobId] = useState<string | null>(null);
+  const [rewriteThinking, setRewriteThinking] = useState(false);
+  const thinkLoadedRef = useRef(false);
   const [rewriteSig, setRewriteSig] = useState("");
-  const [model, setModel] = useState("wan3.0-video");
+  const [modelChoice, setModel] = useState("wan3.0-video");
   const [resolution, setResolution] = useState("480P");
   const [ratio, setRatio] = useState("16:9");
   const [duration, setDuration] = useState(30);
@@ -101,9 +133,47 @@ export default function VideoPanel({
   const [lastFrame, setLastFrame] = useState<MediaItem | null>(null);
   const [warnedText, setWarnedText] = useState<string | null>(null);
 
-  const showFrameMode = videoProvider === "qwencloud";
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      thinkLoadedRef.current = true;
+      try {
+        if (localStorage.getItem("genforge.rewriteThinking") === "1")
+          setRewriteThinking(true);
+      } catch {}
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  useEffect(() => {
+    if (!thinkLoadedRef.current) return;
+    try {
+      localStorage.setItem("genforge.rewriteThinking", rewriteThinking ? "1" : "0");
+    } catch {}
+  }, [rewriteThinking]);
+
+  const entry = models.find((m) => m.id === modelChoice) ?? models[0] ?? null;
+  const model = entry?.id ?? modelChoice;
+  const policy = entry?.policy ?? FALLBACK_POLICY;
+  const refPolicy = policy.refs;
+  const MAX_IMAGES = refPolicy.maxImages;
+  const MAX_VIDEOS = refPolicy.maxVideos;
+  const MAX_AUDIO = refPolicy.maxAudio;
+  const MAX_VIDEO_TOTAL_SEC = refPolicy.maxVideoTotalSec;
+  const MAX_AUDIO_SEC = refPolicy.maxAudioSec;
+  const MAX_IMAGE_BYTES = refPolicy.maxImageMB * MB;
+  const MAX_VIDEO_BYTES = refPolicy.maxVideoMB * MB;
+  const MAX_AUDIO_BYTES = refPolicy.maxAudioMB * MB;
+  const budgetApplies = refPolicy.videoCountsTowardDuration && MAX_VIDEOS > 0;
+  const TOTAL_BUDGET_SEC = refPolicy.totalBudgetSec;
+  const bounds = durationBounds(policy.durations);
+  const discrete = "values" in policy.durations ? policy.durations.values : null;
+  const hasLastFrame = policy.frames.includes("last_frame");
+
+  const showFrameMode =
+    policy.frames.length > 0 &&
+    (!policy.framesRequireQwencloud || entry?.resolvedProvider === "qwencloud");
   const frameMode = showFrameMode && genMode === "frame";
-  const smartCapable = !model.includes("/") && !frameMode;
+  const takesRefs = MAX_IMAGES + MAX_VIDEOS + MAX_AUDIO > 0;
+  const smartCapable = policy.smartDuration && !frameMode;
   const smartOn = smartDuration && smartCapable;
 
   const images = items.filter((i) => i.kind === "image");
@@ -114,14 +184,60 @@ export default function VideoPanel({
   );
   const pending = items.some((i) => i.state === "uploading");
   const broken = items.some((i) => i.state === "error");
-  const durationMax = Math.max(2, TOTAL_BUDGET_SEC - Math.ceil(totalVideoSec));
+  const durationMax = budgetApplies
+    ? Math.min(bounds.max, Math.max(bounds.min, TOTAL_BUDGET_SEC - Math.ceil(totalVideoSec)))
+    : bounds.max;
 
+  const durationsKey = JSON.stringify(policy.durations);
+  const resolutionsKey = policy.resolutions.join("|");
+  const ratiosKey = policy.ratios.join("|");
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
-      setDuration((d) => (d > durationMax ? durationMax : d));
+      const d: DurationPolicy = JSON.parse(durationsKey);
+      setDuration((cur) => snapDuration(d, cur, durationMax));
+      const res = resolutionsKey.split("|");
+      setResolution((cur) => orderedResolution(res, cur));
+      const ratios = ratiosKey.split("|");
+      setRatio((cur) =>
+        ratios.includes(cur) ? cur : ratios.includes("16:9") ? "16:9" : ratios[0]
+      );
     });
     return () => cancelAnimationFrame(raf);
-  }, [durationMax]);
+  }, [durationMax, durationsKey, resolutionsKey, ratiosKey]);
+
+  useEffect(() => {
+    if (!models.length || models.some((m) => m.id === modelChoice)) return;
+    const raf = requestAnimationFrame(() => setModel(models[0].id));
+    return () => cancelAnimationFrame(raf);
+  }, [models, modelChoice]);
+
+  const audioCount = items.filter((i) => i.kind === "audio" && i.state !== "error").length;
+  const limitIssues = useMemo(() => {
+    if (frameMode) return [];
+    const out: string[] = [];
+    const label = entry?.label ?? "This model";
+    const imgs = items.filter((i) => i.kind === "image" && i.state !== "error").length;
+    const vids = items.filter((i) => i.kind === "video" && i.state !== "error").length;
+    if (imgs > MAX_IMAGES)
+      out.push(
+        MAX_IMAGES
+          ? `${label} takes ${MAX_IMAGES} reference images — remove ${imgs - MAX_IMAGES}.`
+          : `${label} does not take reference images — remove them or switch model.`
+      );
+    if (vids > MAX_VIDEOS)
+      out.push(
+        MAX_VIDEOS
+          ? `${label} takes ${MAX_VIDEOS} reference videos — remove ${vids - MAX_VIDEOS}.`
+          : `${label} does not take reference video — remove it or switch model.`
+      );
+    if (audioCount > MAX_AUDIO)
+      out.push(
+        MAX_AUDIO
+          ? `${label} takes ${MAX_AUDIO} audio clip${MAX_AUDIO === 1 ? "" : "s"} — remove ${audioCount - MAX_AUDIO}.`
+          : `${label} does not take reference audio — remove it or switch model.`
+      );
+    return out;
+  }, [items, frameMode, entry, MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO, audioCount]);
 
   function notify(msg: string) {
     setNotices((n) => [...n.slice(-3), msg]);
@@ -370,7 +486,7 @@ export default function VideoPanel({
       });
     }
     let audioItem: MediaItem | null = null;
-    if (c.hasAudio) {
+    if (c.hasAudio && audioIdx <= MAX_AUDIO) {
       audioItem = {
         id: nextId(),
         kind: "audio",
@@ -454,7 +570,7 @@ export default function VideoPanel({
   async function getCharRefs(
     c: Character
   ): Promise<{ refs?: CharRefs; msg?: string; warnings: string[] }> {
-    const key = `${c.id}@${c.updatedAt ?? c.createdAt}`;
+    const key = `${c.id}@${c.updatedAt ?? c.createdAt}@${MAX_AUDIO > 0 ? "a" : ""}`;
     const cached = charRefsCache.current.get(key);
     if (cached) return { refs: cached, warnings: [] };
     const warnings: string[] = [];
@@ -473,7 +589,7 @@ export default function VideoPanel({
     if (!images.length)
       return { msg: `Could not load ${c.name}'s reference images`, warnings };
     let audio: CharRefs["audio"];
-    if (c.hasAudio) {
+    if (c.hasAudio && MAX_AUDIO > 0) {
       try {
         const res = await fetch(charAudioUrl(c));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -575,8 +691,16 @@ export default function VideoPanel({
         file.type.startsWith("image/") || IMAGE_EXT.test(file.name);
 
       if (isAudio) {
+        if (audCount >= MAX_AUDIO) {
+          errs.push(
+            MAX_AUDIO
+              ? `${file.name}: ${entry?.label ?? "this model"} takes ${MAX_AUDIO} audio clip${MAX_AUDIO === 1 ? "" : "s"}`
+              : `${file.name}: ${entry?.label ?? "this model"} does not take reference audio`
+          );
+          continue;
+        }
         if (file.size > MAX_AUDIO_BYTES) {
-          errs.push(`${file.name}: audio exceeds 15MB limit`);
+          errs.push(`${file.name}: audio exceeds ${refPolicy.maxAudioMB}MB limit`);
           continue;
         }
         audCount++;
@@ -625,11 +749,15 @@ export default function VideoPanel({
         })();
       } else if (isVideo) {
         if (vidCount >= MAX_VIDEOS) {
-          errs.push(`${file.name}: max ${MAX_VIDEOS} reference videos`);
+          errs.push(
+            MAX_VIDEOS
+              ? `${file.name}: max ${MAX_VIDEOS} reference videos`
+              : `${file.name}: ${entry?.label ?? "this model"} does not take reference video`
+          );
           continue;
         }
         if (file.size > MAX_VIDEO_BYTES) {
-          errs.push(`${file.name}: video exceeds 100MB limit`);
+          errs.push(`${file.name}: video exceeds ${refPolicy.maxVideoMB}MB limit`);
           continue;
         }
         vidCount++;
@@ -686,11 +814,15 @@ export default function VideoPanel({
         })();
       } else if (isImage) {
         if (imgCount >= MAX_IMAGES) {
-          errs.push(`${file.name}: max ${MAX_IMAGES} reference images`);
+          errs.push(
+            MAX_IMAGES
+              ? `${file.name}: max ${MAX_IMAGES} reference images`
+              : `${file.name}: ${entry?.label ?? "this model"} does not take reference images`
+          );
           continue;
         }
         if (file.size > MAX_IMAGE_BYTES) {
-          errs.push(`${file.name}: image exceeds 20MB limit`);
+          errs.push(`${file.name}: image exceeds ${refPolicy.maxImageMB}MB limit`);
           continue;
         }
         imgCount++;
@@ -782,7 +914,7 @@ export default function VideoPanel({
       return;
     }
     if (file.size > MAX_IMAGE_BYTES) {
-      notify(`${file.name}: frame image exceeds 20MB limit`);
+      notify(`${file.name}: frame image exceeds ${refPolicy.maxImageMB}MB limit`);
       return;
     }
     const item: MediaItem = {
@@ -907,6 +1039,7 @@ export default function VideoPanel({
           prompt: text,
           inventory,
           sig: readySig(list),
+          thinking: rewriteThinking,
           projectId,
         }),
       });
@@ -932,14 +1065,16 @@ export default function VideoPanel({
       return;
     }
     setWarnedText(null);
+    if (!entry) {
+      notify("No video model is ready — enable one on the Models page");
+      return;
+    }
     const effectiveModel = model;
+    const sendAudio = policy.audio && audio;
     if (frameMode) {
-      if (effectiveModel.includes("/")) {
-        notify("Frame mode needs a wan3.0 model — clear the OpenRouter id first");
-        return;
-      }
       const ff = firstFrame?.state === "ready" && firstFrame.url ? firstFrame : null;
-      const lf = lastFrame?.state === "ready" && lastFrame.url ? lastFrame : null;
+      const lf =
+        hasLastFrame && lastFrame?.state === "ready" && lastFrame.url ? lastFrame : null;
       if (!ff) {
         notify("Add a first-frame image");
         return;
@@ -975,7 +1110,7 @@ export default function VideoPanel({
           resolution,
           ratio,
           duration,
-          audio,
+          audio: sendAudio,
           watermark,
           media,
         });
@@ -1001,14 +1136,17 @@ export default function VideoPanel({
       notify("Remove failed media before generating");
       return;
     }
-    if (smartOn) {
-      if (totalVideoSec > TOTAL_BUDGET_SEC - 2) {
-        notify(
-          `Reference video already uses ${totalVideoSec.toFixed(1)}s of the ${TOTAL_BUDGET_SEC}s budget — no room left for the model to choose a length`
-        );
-        return;
-      }
-    } else if (totalVideoSec + duration > TOTAL_BUDGET_SEC) {
+    if (limitIssues.length) {
+      limitIssues.forEach(notify);
+      return;
+    }
+    if (budgetApplies && smartOn && totalVideoSec > TOTAL_BUDGET_SEC - bounds.min) {
+      notify(
+        `Reference video already uses ${totalVideoSec.toFixed(1)}s of the ${TOTAL_BUDGET_SEC}s budget — no room left for the model to choose a length`
+      );
+      return;
+    }
+    if (budgetApplies && !smartOn && totalVideoSec + duration > TOTAL_BUDGET_SEC) {
       notify(
         `Reference video (${totalVideoSec.toFixed(1)}s) + duration (${duration}s) exceeds the ${TOTAL_BUDGET_SEC}s combined limit`
       );
@@ -1065,6 +1203,13 @@ export default function VideoPanel({
           (i) => i.kind === "image" && i.state !== "error"
         ).length;
         const n = Math.min(MAX_IMAGES - usedImgs, refs.images.length);
+        if (MAX_IMAGES === 0) {
+          notify(
+            `${entry.label} takes no reference images — ${c.name} is described in the prompt only`
+          );
+          newlyAttached.push(c);
+          continue;
+        }
         if (n <= 0) {
           notify(
             `Image slots full (max ${MAX_IMAGES}) — cannot add ${c.name} references`
@@ -1089,7 +1234,7 @@ export default function VideoPanel({
             state: "ready",
             characterId: c.id,
           });
-        if (refs.audio)
+        if (refs.audio && audUsed < MAX_AUDIO)
           working.push({
             id: nextId(),
             kind: "audio",
@@ -1140,7 +1285,7 @@ export default function VideoPanel({
         resolution,
         ratio,
         duration: smartOn ? -1 : duration,
-        audio,
+        audio: sendAudio,
         watermark,
         media,
       });
@@ -1197,6 +1342,16 @@ export default function VideoPanel({
               ]}
             />
           </div>
+          <span
+            title="Thinking mode: the rewrite model reasons before it answers — occasionally better on tangled prompts, but takes 40–160s instead of 5–15s and costs more. Off is fine for normal rewrites."
+            className="shrink-0"
+          >
+            <Toggle
+              checked={rewriteThinking}
+              onChange={setRewriteThinking}
+              label="Think"
+            />
+          </span>
           <Btn
             variant="ghost"
             onClick={handleRewrite}
@@ -1284,15 +1439,22 @@ export default function VideoPanel({
                 value={genMode}
                 onChange={(v) => setGenMode(v)}
                 options={[
-                  { value: "text", label: "Text / reference" },
-                  { value: "frame", label: "First + last frame" },
+                  { value: "text", label: takesRefs ? "Text / reference" : "Text only" },
+                  {
+                    value: "frame",
+                    label: hasLastFrame ? "First + last frame" : "Start from an image",
+                  },
                 ]}
               />
             </Field>
             <p className="mt-1.5 text-xs text-muted">
               {genMode === "frame"
-                ? "Give a first frame, and optionally a last frame — the model animates between them."
-                : "A prompt, plus any reference images, video, audio or saved characters."}
+                ? hasLastFrame
+                  ? "Give a first frame, and optionally a last frame — the model animates between them."
+                  : "Give a first frame — the model animates from it."
+                : takesRefs
+                  ? "A prompt, plus any reference images, video, audio or saved characters."
+                  : "A prompt only — this model takes no reference media."}
             </p>
           </div>
         )}
@@ -1309,7 +1471,7 @@ export default function VideoPanel({
 
         {frameMode ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {(["first", "last"] as const).map((slot) => {
+            {(hasLastFrame ? (["first", "last"] as const) : (["first"] as const)).map((slot) => {
               const item = slot === "first" ? firstFrame : lastFrame;
               return (
                 <div key={slot}>
@@ -1372,16 +1534,32 @@ export default function VideoPanel({
               );
             })}
             <p className="sm:col-span-2 text-xs text-muted">
-              frames: JPEG/PNG/BMP/WEBP ≤20MB · aspect ratio ≤ 8:1 · adaptive ratio recommended
+              Frames can be JPEG, PNG, BMP or WEBP up to {refPolicy.maxImageMB}MB.
             </p>
           </div>
         ) : (
           <>
-            {items.length === 0 && (
+            {limitIssues.length > 0 && (
+              <div className="mb-3 space-y-1">
+                {limitIssues.map((n) => (
+                  <p key={n} className="text-xs text-danger">
+                    {n}
+                  </p>
+                ))}
+              </div>
+            )}
+            {items.length === 0 && !takesRefs && (
+              <p className="text-sm text-muted">
+                {entry?.label ?? "This model"} takes no reference media.
+                {showFrameMode ? " Switch to image mode above to start from a picture." : ""}{" "}
+                Characters you mention are described in the prompt.
+              </p>
+            )}
+            {items.length === 0 && takesRefs && (
               <DropZone
-                accept="image/*,video/mp4,video/quicktime,.mp4,.mov,audio/*,.mp3,.wav,.m4a"
-                title="Drop images, video or audio"
-                hint={`Or click to browse, or drag one in from the gallery. Up to ${MAX_IMAGES} images, ${MAX_VIDEOS} videos (${MAX_VIDEO_TOTAL_SEC}s combined) and audio (first ${MAX_AUDIO_SEC}s used).`}
+                accept={acceptFor(MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO)}
+                title={`Drop ${kindsLabel(MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO)}`}
+                hint={`Or click to browse, or drag one in from the gallery. ${refHint(refPolicy)}`}
                 onFiles={handleFiles}
                 onAssetDrop={handleAssetDrop}
               />
@@ -1461,7 +1639,7 @@ export default function VideoPanel({
                   </div>
                 ))}
                 <AddTile
-                  accept="image/*,video/mp4,video/quicktime,.mp4,.mov,audio/*,.mp3,.wav,.m4a"
+                  accept={acceptFor(MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO)}
                   onFiles={handleFiles}
                   onAssetDrop={handleAssetDrop}
                   className="aspect-video min-h-20"
@@ -1483,40 +1661,49 @@ export default function VideoPanel({
 
       <Panel title="Output settings" step="03">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Model">
-            <Seg
-              value={model}
-              onChange={setModel}
-              options={[
-                { value: "wan3.0-video", label: "Wan 3.0" },
-                { value: "wan3.0-video-prime", label: "Prime" },
-                { value: "x-ai/grok-imagine-video-1.5", label: "Grok 1.5" },
-              ]}
-            />
+          <Field label="Model" hint={entry ? undefined : "none enabled"}>
+            {models.length > 0 && models.length <= 3 ? (
+              <Seg
+                value={model}
+                onChange={setModel}
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+              />
+            ) : models.length > 3 ? (
+              <Select
+                value={model}
+                onChange={setModel}
+                options={models.map((m) => ({ value: m.id, label: m.label }))}
+              />
+            ) : (
+              <Link
+                href="/models"
+                className="flex items-center h-9 px-3 rounded-md border border-line bg-panel2 text-sm text-accent hover:bg-panel2/70"
+              >
+                Enable a video model on the Models page
+              </Link>
+            )}
           </Field>
           <Field label="Resolution">
-            <Seg
-              value={resolution}
-              onChange={setResolution}
-              options={[
-                { value: "480P", label: "480P" },
-                { value: "720P", label: "720P" },
-                { value: "1080P", label: "1080P" },
-              ]}
-            />
+            {policy.resolutions.length > 1 ? (
+              <Seg
+                value={resolution}
+                onChange={setResolution}
+                options={policy.resolutions.map((r) => ({ value: r, label: r }))}
+              />
+            ) : (
+              <p className="h-9 flex items-center text-sm text-ink">
+                {policy.resolutions[0]}
+              </p>
+            )}
           </Field>
           <Field label="Aspect ratio">
             <Select
               value={ratio}
               onChange={setRatio}
-              options={[
-                { value: "adaptive", label: "adaptive (auto)" },
-                { value: "16:9", label: "16:9" },
-                { value: "4:3", label: "4:3" },
-                { value: "1:1", label: "1:1" },
-                { value: "3:4", label: "3:4" },
-                { value: "9:16", label: "9:16" },
-              ]}
+              options={policy.ratios.map((r) => ({
+                value: r,
+                label: r === "adaptive" ? "adaptive (auto)" : r,
+              }))}
             />
           </Field>
           <Field
@@ -1524,7 +1711,9 @@ export default function VideoPanel({
             hint={
               smartOn
                 ? `model picks, up to ${durationMax}s`
-                : `2–${durationMax}s`
+                : discrete
+                  ? `${discrete.join(", ")}s`
+                  : `${bounds.min}–${durationMax}s`
             }
           >
             <div className="flex flex-col gap-2">
@@ -1544,16 +1733,24 @@ export default function VideoPanel({
                   billed for what it produces, so the cost is not known until the
                   video lands.
                 </p>
+              ) : discrete ? (
+                <Seg
+                  value={String(duration)}
+                  onChange={(v) => setDuration(Number(v))}
+                  options={discrete
+                    .filter((v) => v <= durationMax)
+                    .map((v) => ({ value: String(v), label: `${v}s` }))}
+                />
               ) : (
                 <Slider
                   value={duration}
                   onChange={setDuration}
-                  min={2}
+                  min={bounds.min}
                   max={durationMax}
                   suffix="s"
                 />
               )}
-              {totalVideoSec > 0 && (
+              {budgetApplies && totalVideoSec > 0 && (
                 <p className="text-2xs text-muted">
                   Reference video uses {totalVideoSec.toFixed(1)}s of the{" "}
                   {TOTAL_BUDGET_SEC}s combined budget.
@@ -1561,9 +1758,16 @@ export default function VideoPanel({
               )}
             </div>
           </Field>
-          <div className="sm:col-span-2 flex flex-wrap gap-x-6 gap-y-3">
-            <Toggle checked={audio} onChange={setAudio} label="Audio" />
-          </div>
+          {policy.audio && (
+            <div className="sm:col-span-2 flex flex-wrap gap-x-6 gap-y-3">
+              <Toggle checked={audio} onChange={setAudio} label="Audio" />
+            </div>
+          )}
+          {entry?.notes && (
+            <p className="sm:col-span-2 text-2xs text-muted leading-snug">
+              {entry.notes}
+            </p>
+          )}
         </div>
       </Panel>
 

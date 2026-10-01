@@ -111,6 +111,8 @@ export type CostRecord = {
   createdAt: number;
   estimate: number | null;
   deleted?: boolean;
+  used?: boolean;
+  durationSec?: number;
 };
 
 export type DeletedAssetRecord = {
@@ -122,6 +124,8 @@ export type DeletedAssetRecord = {
   deletedAt: number;
   estimate: number | null;
   projectId: string | null;
+  used?: boolean;
+  durationSec?: number;
 };
 
 export type DirectorRun = {
@@ -206,11 +210,14 @@ export type StoredAsset = {
   projectId?: string | null;
   copiedFrom?: string;
   hidden?: boolean;
+  pinned?: boolean;
+  used?: boolean;
 };
 
 export type TaskRecord = {
   id: string;
   hidden?: boolean;
+  pinned?: boolean;
   kind: "video" | "image";
   model: string;
   prompt: string;
@@ -247,6 +254,7 @@ export type RewriteJob = {
   inventory: string[];
   sig: string;
   model: string;
+  thinking?: boolean;
   rewrote?: string;
   error?: string;
   estimate?: number | null;

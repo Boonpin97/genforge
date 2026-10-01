@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ApiErrorLike, extractError, friendlyError } from "@/lib/dashscope";
+import { extractError, friendlyError } from "@/lib/dashscope";
+import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { openrouter } from "@/lib/openrouter";
+import { requireModel } from "@/lib/config";
+import { checkVideo } from "@/lib/policy-check";
+import type { MediaPayload } from "@/lib/types";
 
 export const maxDuration = 60;
 
@@ -8,24 +12,17 @@ type Body = {
   prompt?: string;
   model?: string;
   images?: string[];
+  firstFrame?: string;
+  lastFrame?: string;
   duration?: number;
   ratio?: string;
   resolution?: string;
+  audio?: boolean;
+  seed?: number;
 };
 
-const SLUG_RE = /^[A-Za-z0-9._-]+\/[A-Za-z0-9._:-]+$/;
-const RESOLUTIONS = ["480p", "720p", "768p", "1080p", "1k", "2k", "4k"];
-const ASPECTS = [
-  "16:9",
-  "9:16",
-  "1:1",
-  "4:3",
-  "3:4",
-  "3:2",
-  "2:3",
-  "21:9",
-  "9:21",
-];
+const isImageUrl = (u: unknown): u is string =>
+  typeof u === "string" && (/^https?:/i.test(u) || /^data:image\//i.test(u));
 
 export async function POST(req: NextRequest) {
   let body: Body;
@@ -45,35 +42,47 @@ export async function POST(req: NextRequest) {
       { status: 400 }
     );
   }
-  const model = (body.model || "").trim();
-  if (!SLUG_RE.test(model)) {
-    return NextResponse.json(
-      { code: "BadRequest", message: "Not an OpenRouter model id." },
-      { status: 400 }
-    );
-  }
-
   try {
-    const request: Record<string, unknown> = { model, prompt };
-    const urls = (body.images || []).filter(
-      (u) =>
-        typeof u === "string" && (/^https?:/i.test(u) || /^data:image\//i.test(u))
-    );
-    if (urls.length) {
-      request.frame_images = [
-        { type: "image_url", image_url: { url: urls[0] }, frame_type: "first_frame" },
-      ];
-      if (urls.length > 1 && !model.startsWith("x-ai/"))
-        request.input_references = urls
-          .slice(1)
-          .map((u) => ({ type: "image_url", image_url: { url: u } }));
-    }
+    const entry = await requireModel((body.model || "").trim(), "video");
+    if (entry.provider !== "openrouter")
+      throw new ApiErrorLike("BadRequest", `${entry.label} is not an OpenRouter model.`);
+    const policy = entry.policy;
+    const urls = (body.images || []).filter(isImageUrl);
+    const first = isImageUrl(body.firstFrame) ? body.firstFrame : null;
+    const last = isImageUrl(body.lastFrame) ? body.lastFrame : null;
+    const media: Pick<MediaPayload, "type">[] = [
+      ...urls.map(() => ({ type: "reference_image" as const })),
+      ...(first ? [{ type: "first_frame" as const }] : []),
+      ...(last ? [{ type: "last_frame" as const }] : []),
+    ];
+    checkVideo(entry, {
+      duration: body.duration,
+      resolution: body.resolution,
+      ratio: body.ratio,
+      media,
+    });
+    if (last && !first)
+      throw new ApiErrorLike("PolicyViolation", "A last frame needs a first frame too.");
+
+    const request: Record<string, unknown> = { model: entry.id, prompt };
+    const frames: Record<string, unknown>[] = [];
+    if (first)
+      frames.push({ type: "image_url", image_url: { url: first }, frame_type: "first_frame" });
+    if (last)
+      frames.push({ type: "image_url", image_url: { url: last }, frame_type: "last_frame" });
+    if (frames.length) request.frame_images = frames;
+    if (urls.length)
+      request.input_references = urls.map((u) => ({
+        type: "image_url",
+        image_url: { url: u },
+      }));
     if (typeof body.duration === "number" && body.duration >= 1)
       request.duration = Math.round(body.duration);
-    if (typeof body.ratio === "string" && ASPECTS.includes(body.ratio))
-      request.aspect_ratio = body.ratio;
-    const res2 = (body.resolution || "").toLowerCase();
-    if (RESOLUTIONS.includes(res2)) request.resolution = res2;
+    if (body.ratio) request.aspect_ratio = body.ratio;
+    if (body.resolution) request.resolution = body.resolution;
+    if (policy.audio && typeof body.audio === "boolean")
+      request.generate_audio = body.audio;
+    if (policy.seed && typeof body.seed === "number") request.seed = body.seed;
 
     const res = await openrouter("/videos", { method: "POST", json: request });
     const out = res.body as {
@@ -116,7 +125,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {
-      return NextResponse.json(err.toApiError(), { status: 500 });
+      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
     }
     return NextResponse.json(
       {

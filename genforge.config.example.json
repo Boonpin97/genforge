@@ -1,0 +1,1306 @@
+{
+  "version": 1,
+  "providers": {
+    "dashscope": {
+      "apiKey": "",
+      "baseUrl": "https://dashscope-intl.aliyuncs.com"
+    },
+    "qwencloud": {
+      "apiKey": "",
+      "baseUrl": "https://dashscope-intl.aliyuncs.com"
+    },
+    "openrouter": {
+      "apiKey": "",
+      "baseUrl": "https://openrouter.ai/api/v1"
+    }
+  },
+  "videoProvider": "dashscope",
+  "roles": {
+    "director": "qwen3.8-max",
+    "rewrite": "qwen3.8-flash",
+    "appearance": "qwen3-vl-flash"
+  },
+  "models": [
+    {
+      "id": "wan3.0-video",
+      "label": "Wan 3.0",
+      "kind": "video",
+      "provider": "alibaba",
+      "enabled": true,
+      "policy": {
+        "durations": {
+          "min": 2,
+          "max": 30
+        },
+        "smartDuration": true,
+        "resolutions": [
+          "480P",
+          "720P",
+          "1080P"
+        ],
+        "ratios": [
+          "adaptive",
+          "16:9",
+          "4:3",
+          "1:1",
+          "3:4",
+          "9:16"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "framesRequireQwencloud": true,
+        "refs": {
+          "maxImages": 10,
+          "maxVideos": 5,
+          "maxVideoTotalSec": 15,
+          "maxAudio": 1,
+          "maxAudioSec": 15,
+          "maxImageMB": 20,
+          "maxVideoMB": 100,
+          "maxAudioMB": 15,
+          "videoCountsTowardDuration": true,
+          "totalBudgetSec": 30,
+          "framesExclusiveWithRefs": true
+        },
+        "watermark": true,
+        "seed": true
+      },
+      "pricing": {
+        "perSecond": {
+          "480P": 0.05,
+          "720P": 0.1,
+          "1080P": 0.2
+        }
+      },
+      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint."
+    },
+    {
+      "id": "wan3.0-video-prime",
+      "label": "Wan 3.0 Prime",
+      "kind": "video",
+      "provider": "alibaba",
+      "enabled": true,
+      "policy": {
+        "durations": {
+          "min": 2,
+          "max": 30
+        },
+        "smartDuration": true,
+        "resolutions": [
+          "480P",
+          "720P",
+          "1080P"
+        ],
+        "ratios": [
+          "adaptive",
+          "16:9",
+          "4:3",
+          "1:1",
+          "3:4",
+          "9:16"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "framesRequireQwencloud": true,
+        "refs": {
+          "maxImages": 10,
+          "maxVideos": 5,
+          "maxVideoTotalSec": 15,
+          "maxAudio": 1,
+          "maxAudioSec": 15,
+          "maxImageMB": 20,
+          "maxVideoMB": 100,
+          "maxAudioMB": 15,
+          "videoCountsTowardDuration": true,
+          "totalBudgetSec": 30,
+          "framesExclusiveWithRefs": true
+        },
+        "watermark": true,
+        "seed": true
+      },
+      "pricing": {
+        "perSecond": {
+          "480P": 0.068,
+          "720P": 0.14,
+          "1080P": 0.28
+        }
+      },
+      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint."
+    },
+    {
+      "id": "alibaba/happyhorse-1.1",
+      "label": "HappyHorse 1.1",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 3,
+          "max": 15
+        },
+        "resolutions": [
+          "720p",
+          "1080p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9",
+          "9:21"
+        ],
+        "audio": false,
+        "frames": [
+          "first_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 9,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "720p": 0.0988,
+          "1080p": 0.1278
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "bytedance/seedance-2.5",
+      "label": "Seedance 2.5",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 4,
+          "max": 30
+        },
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "ratios": [
+          "16:9",
+          "4:3",
+          "1:1",
+          "3:4",
+          "9:16",
+          "21:9"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 9,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480p": 0.1,
+          "720p": 0.23
+        }
+      },
+      "notes": "Priced per video token upstream; the per-second rates here are estimates. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "bytedance/seedance-2.0",
+      "label": "Seedance 2.0",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 4,
+          "max": 15
+        },
+        "resolutions": [
+          "480p",
+          "720p",
+          "1080p",
+          "4K"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9",
+          "9:21"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 9,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480p": 0.067,
+          "720p": 0.15,
+          "1080p": 0.37,
+          "4K": 0.8
+        }
+      },
+      "notes": "Priced per video token upstream; the per-second rates here are estimates. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "bytedance/seedance-2.0-fast",
+      "label": "Seedance 2.0 Fast",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 4,
+          "max": 15
+        },
+        "resolutions": [
+          "480p",
+          "720p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "21:9",
+          "9:21"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 9,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480p": 0.04,
+          "720p": 0.091
+        }
+      },
+      "notes": "Priced per video token upstream; the per-second rates here are estimates. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "kwaivgi/kling-v3.0-pro",
+      "label": "Kling 3.0 Pro",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 3,
+          "max": 15
+        },
+        "resolutions": [
+          "720p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": false,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 7,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "default": 0.168
+        },
+        "perSecondNoAudio": {
+          "default": 0.112
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "kwaivgi/kling-v3.0-std",
+      "label": "Kling 3.0 Standard",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 3,
+          "max": 15
+        },
+        "resolutions": [
+          "720p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": false,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 7,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "default": 0.126
+        },
+        "perSecondNoAudio": {
+          "default": 0.084
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "google/veo-3.1",
+      "label": "Veo 3.1",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "values": [
+            4,
+            6,
+            8
+          ]
+        },
+        "resolutions": [
+          "720p",
+          "1080p",
+          "4K"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 3,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "default": 0.4,
+          "4K": 0.6
+        },
+        "perSecondNoAudio": {
+          "default": 0.2,
+          "4K": 0.4
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "google/veo-3.1-fast",
+      "label": "Veo 3.1 Fast",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "values": [
+            4,
+            6,
+            8
+          ]
+        },
+        "resolutions": [
+          "720p",
+          "1080p",
+          "4K"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 3,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "default": 0.12,
+          "720p": 0.1,
+          "4K": 0.3
+        },
+        "perSecondNoAudio": {
+          "default": 0.1,
+          "720p": 0.08,
+          "4K": 0.25
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "google/veo-3.1-lite",
+      "label": "Veo 3.1 Lite",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "values": [
+            4,
+            6,
+            8
+          ]
+        },
+        "resolutions": [
+          "720p",
+          "1080p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 3,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "default": 0.08,
+          "720p": 0.05
+        },
+        "perSecondNoAudio": {
+          "default": 0.05,
+          "720p": 0.03
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "minimax/hailuo-3",
+      "label": "Hailuo 3",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 5,
+          "max": 15
+        },
+        "resolutions": [
+          "2K"
+        ],
+        "ratios": [
+          "21:9",
+          "16:9",
+          "4:3",
+          "1:1",
+          "3:4",
+          "9:16"
+        ],
+        "audio": true,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": false,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 4,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "default": 0.13
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "minimax/hailuo-3-max",
+      "label": "Hailuo 3 Max",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 5,
+          "max": 15
+        },
+        "resolutions": [
+          "480p",
+          "768p"
+        ],
+        "ratios": [
+          "21:9",
+          "16:9",
+          "4:3",
+          "1:1",
+          "3:4",
+          "9:16"
+        ],
+        "audio": false,
+        "frames": [
+          "first_frame",
+          "last_frame"
+        ],
+        "seed": false,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 4,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480p": 0.05,
+          "768p": 0.08
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "runway/gen-4.5",
+      "label": "Runway Gen-4.5",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "min": 2,
+          "max": 10
+        },
+        "resolutions": [
+          "720p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "audio": false,
+        "frames": [
+          "first_frame"
+        ],
+        "seed": true,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 0,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "default": 0.12
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "x-ai/grok-imagine-video-1.5",
+      "label": "Grok Imagine 1.5",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": true,
+      "policy": {
+        "durations": {
+          "min": 1,
+          "max": 15
+        },
+        "resolutions": [
+          "480p",
+          "720p",
+          "1080p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "3:2",
+          "2:3"
+        ],
+        "audio": false,
+        "frames": [
+          "first_frame"
+        ],
+        "seed": false,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 0,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480p": 0.08,
+          "720p": 0.14,
+          "1080p": 0.25
+        }
+      },
+      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "openai/sora-2-pro",
+      "label": "Sora 2 Pro",
+      "kind": "video",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "durations": {
+          "values": [
+            4,
+            8,
+            12,
+            16,
+            20
+          ]
+        },
+        "resolutions": [
+          "720p",
+          "1080p"
+        ],
+        "ratios": [
+          "16:9",
+          "9:16"
+        ],
+        "audio": true,
+        "frames": [],
+        "seed": false,
+        "smartDuration": false,
+        "framesRequireQwencloud": false,
+        "watermark": false,
+        "refs": {
+          "maxImages": 0,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "720p": 0.3,
+          "1080p": 0.5
+        }
+      },
+      "deprecated": true,
+      "notes": "OpenAI deprecated Sora 2 in April 2026 and shut its API down on 24 September 2026. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+    },
+    {
+      "id": "qwen-image-3.0-pro",
+      "label": "Qwen Image Pro",
+      "kind": "image",
+      "provider": "alibaba",
+      "enabled": true,
+      "policy": {
+        "maxRefs": 3,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": true,
+        "watermark": true,
+        "seed": true
+      },
+      "pricing": {
+        "perImage": {
+          "1k": 0.05,
+          "2k": 0.1
+        },
+        "perInputImage": {
+          "1k": 0.01,
+          "2k": 0.02
+        }
+      }
+    },
+    {
+      "id": "qwen-image-3.0",
+      "label": "Qwen Image Fast",
+      "kind": "image",
+      "provider": "alibaba",
+      "enabled": true,
+      "policy": {
+        "maxRefs": 3,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": true,
+        "watermark": true,
+        "seed": true
+      },
+      "pricing": {
+        "perImage": {
+          "1k": 0.05,
+          "2k": 0.1
+        },
+        "perInputImage": {
+          "1k": 0.01,
+          "2k": 0.02
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3.1-flash-image",
+      "label": "Nano Banana 2",
+      "kind": "image",
+      "provider": "openrouter",
+      "enabled": true,
+      "policy": {
+        "maxRefs": 14,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": false,
+        "watermark": false,
+        "seed": false
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.134
+        }
+      }
+    },
+    {
+      "id": "google/gemini-3-pro-image",
+      "label": "Nano Banana Pro",
+      "kind": "image",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "maxRefs": 14,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": false,
+        "watermark": false,
+        "seed": false
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.15
+        }
+      }
+    },
+    {
+      "id": "openai/gpt-image-2",
+      "label": "GPT Image 2",
+      "kind": "image",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "maxRefs": 10,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": false,
+        "watermark": false,
+        "seed": false
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.05
+        }
+      }
+    },
+    {
+      "id": "bytedance-seed/seedream-5-0-pro",
+      "label": "Seedream 5 Pro",
+      "kind": "image",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "maxRefs": 10,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": false,
+        "watermark": false,
+        "seed": false
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.04
+        }
+      }
+    },
+    {
+      "id": "black-forest-labs/flux.2-pro",
+      "label": "FLUX.2 Pro",
+      "kind": "image",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "maxRefs": 8,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": false,
+        "watermark": false,
+        "seed": false
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.03
+        }
+      }
+    },
+    {
+      "id": "x-ai/grok-imagine-image-2.0",
+      "label": "Grok Imagine Image 2",
+      "kind": "image",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "maxRefs": 1,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": false,
+        "watermark": false,
+        "seed": false
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.03
+        }
+      }
+    },
+    {
+      "id": "recraft/recraft-v4.1",
+      "label": "Recraft V4.1",
+      "kind": "image",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "maxRefs": 0,
+        "maxRefMB": 10,
+        "maxN": 6,
+        "sizes": [
+          "auto",
+          "1333*750",
+          "750*1333",
+          "1155*866",
+          "866*1155",
+          "1000*1000"
+        ],
+        "negativePrompt": true,
+        "promptExtend": false,
+        "watermark": false,
+        "seed": false
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.04
+        }
+      }
+    },
+    {
+      "id": "qwen3.8-max",
+      "label": "Qwen 3.8 Max",
+      "kind": "text",
+      "provider": "alibaba",
+      "enabled": true,
+      "policy": {
+        "vision": false,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.002,
+        "per1KOutput": 0.002
+      }
+    },
+    {
+      "id": "qwen3.8-flash",
+      "label": "Qwen 3.8 Flash",
+      "kind": "text",
+      "provider": "alibaba",
+      "enabled": true,
+      "policy": {
+        "vision": false,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.002,
+        "per1KOutput": 0.002
+      }
+    },
+    {
+      "id": "qwen3-vl-flash",
+      "label": "Qwen 3 VL Flash",
+      "kind": "text",
+      "provider": "alibaba",
+      "enabled": true,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.002,
+        "per1KOutput": 0.002
+      }
+    },
+    {
+      "id": "anthropic/claude-opus-5.5",
+      "label": "Claude Opus 5.5",
+      "kind": "text",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.004,
+        "per1KOutput": 0.02
+      }
+    },
+    {
+      "id": "anthropic/claude-sonnet-5",
+      "label": "Claude Sonnet 5",
+      "kind": "text",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.002,
+        "per1KOutput": 0.01
+      }
+    },
+    {
+      "id": "openai/gpt-5.6-sol",
+      "label": "GPT-5.6 Sol",
+      "kind": "text",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.002,
+        "per1KOutput": 0.01
+      }
+    },
+    {
+      "id": "google/gemini-3.8-flash",
+      "label": "Gemini 3.8 Flash",
+      "kind": "text",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.00075,
+        "per1KOutput": 0.00375
+      }
+    },
+    {
+      "id": "deepseek/deepseek-v4.1-flash",
+      "label": "DeepSeek V4.1 Flash",
+      "kind": "text",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.000035,
+        "per1KOutput": 0.00029
+      }
+    },
+    {
+      "id": "moonshotai/kimi-k3",
+      "label": "Kimi K3",
+      "kind": "text",
+      "provider": "openrouter",
+      "enabled": false,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.003,
+        "per1KOutput": 0.015
+      }
+    }
+  ]
+}
