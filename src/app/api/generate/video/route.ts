@@ -4,10 +4,12 @@ import {
   getVideoProvider,
   hasOssMedia,
   videoService,
+  type DashService,
 } from "@/lib/dashscope";
 import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { requireModel } from "@/lib/config";
 import { checkVideo } from "@/lib/policy-check";
+import { upstreamModelId } from "@/lib/model-catalog";
 import type { MediaPayload, MediaType } from "@/lib/types";
 
 export const maxDuration = 60;
@@ -73,12 +75,14 @@ export async function POST(req: NextRequest) {
   }
   try {
     const entry = await requireModel(body.model, "video");
-    if (entry.provider !== "alibaba")
+    if (entry.provider === "openrouter")
       throw new ApiErrorLike("BadRequest", `${entry.label} is an OpenRouter model.`);
-    const model = entry.id;
-    const provider = await getVideoProvider();
+    const model = upstreamModelId(entry);
+    const provider: DashService =
+      entry.provider === "tokenplan" ? "tokenplan" : await getVideoProvider();
     const policy = entry.policy;
     checkVideo(entry, {
+      prompt,
       duration: body.duration,
       resolution: body.resolution,
       ratio: body.ratio,
@@ -96,12 +100,18 @@ export async function POST(req: NextRequest) {
 
     const parameters: Record<string, unknown> = {
       resolution: body.resolution || policy.resolutions[policy.resolutions.length - 1],
-      ratio: body.ratio || policy.ratios[0],
-      prompt_extend: body.promptExtend === true,
-      watermark: policy.watermark && Boolean(body.watermark),
     };
+    const ratioFollowsInput =
+      policy.ratios.length === 1 && policy.ratios[0] === "adaptive";
+    if (!ratioFollowsInput) parameters.ratio = body.ratio || policy.ratios[0];
+    if (entry.provider === "tokenplan") {
+      if (policy.watermark) parameters.watermark = Boolean(body.watermark);
+    } else {
+      parameters.prompt_extend = body.promptExtend === true;
+      parameters.watermark = policy.watermark && Boolean(body.watermark);
+    }
     if (typeof body.duration === "number") parameters.duration = body.duration;
-    if (typeof body.audio === "boolean") parameters.audio = policy.audio && body.audio;
+    if (typeof body.audio === "boolean" && policy.audio) parameters.audio = body.audio;
     if (typeof body.seed === "number" && policy.seed) parameters.seed = body.seed;
 
     const headers: Record<string, string> = {

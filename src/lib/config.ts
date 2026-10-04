@@ -21,7 +21,7 @@ import { sanitizePolicy, sanitizePricing } from "./model-sanitize";
 
 export const CONFIG_FILE = "genforge.config.json";
 
-const PROVIDERS: ProviderId[] = ["dashscope", "qwencloud", "openrouter"];
+const PROVIDERS: ProviderId[] = ["dashscope", "qwencloud", "openrouter", "tokenplan"];
 
 function configPath(): string {
   return path.join(process.cwd(), CONFIG_FILE);

@@ -22,6 +22,8 @@ async function readRuns(): Promise<DirectorRun[]> {
 export async function recordDirectorRun(input: {
   model: string;
   premise: string;
+  instruction?: string;
+  parentId?: string;
   estimate: number | null;
   tokens?: number | null;
   script?: string;
@@ -36,6 +38,10 @@ export async function recordDirectorRun(input: {
     createdAt: Date.now(),
     model: input.model,
     premise: input.premise.slice(0, 120),
+    fullPremise:
+      input.premise.length > 120 ? input.premise.slice(0, 4000) : undefined,
+    instruction: input.instruction?.slice(0, 4000) || undefined,
+    parentId: input.parentId || undefined,
     estimate: input.estimate,
     tokens: input.tokens ?? null,
     script: input.script,
@@ -120,6 +126,9 @@ export type DirectorScript = {
   id: string;
   createdAt: number;
   premise: string;
+  premiseTruncated: boolean;
+  instruction?: string;
+  parentId?: string;
   script: string;
   estimate: number | null;
   revised: boolean;
@@ -141,7 +150,10 @@ export async function listDirectorScripts(
     .map((r) => ({
       id: r.id,
       createdAt: r.createdAt,
-      premise: r.premise,
+      premise: r.fullPremise ?? r.premise,
+      premiseTruncated: !r.fullPremise && r.premise.length >= 120,
+      instruction: r.instruction,
+      parentId: r.parentId,
       script: r.script as string,
       estimate: r.estimate ?? null,
       revised: Boolean(r.revised),

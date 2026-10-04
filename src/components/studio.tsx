@@ -601,7 +601,9 @@ export default function Studio({
           qs.set("duration", String(task.params.duration));
         if (typeof task.params?.audio === "boolean")
           qs.set("audio", String(task.params.audio));
-        if (task.model.includes("/")) qs.set("provider", "openrouter");
+        const resolved = models.find((m) => m.id === task.model)?.resolvedProvider;
+        if (resolved === "openrouter") qs.set("provider", "openrouter");
+        else if (resolved === "tokenplan") qs.set("provider", "tokenplan");
         else if (videoProvider === "qwencloud") qs.set("provider", "qwencloud");
         const q = qs.size ? `?${qs.toString()}` : "";
         const res = await fetch(`/api/task/${task.taskId}${q}`);
@@ -684,7 +686,7 @@ export default function Studio({
         console.error("poll failed", e);
       }
     },
-    [persistAsset, updateTask, videoProvider]
+    [models, persistAsset, updateTask, videoProvider]
   );
 
   useEffect(() => {
@@ -703,6 +705,7 @@ export default function Studio({
   const submitVideo = useCallback(
     async (payload: VideoSubmitPayload): Promise<boolean> => {
       setBanner(null);
+      setAssetPane("generated");
       const id = uid();
       const record: TaskRecord = {
         id,
@@ -809,6 +812,7 @@ export default function Studio({
   const submitImage = useCallback(
     async (payload: ImageSubmitPayload): Promise<boolean> => {
       setBanner(null);
+      setAssetPane("generated");
       const count = Math.min(6, Math.max(1, Number(payload.n) || 1));
         const endpoint = payload.model.includes("/")
           ? "/api/generate/openrouter"
@@ -983,8 +987,8 @@ export default function Studio({
   ).length;
 
   return (
-    <div className="flex-1 flex flex-col min-h-screen">
-      <header className="border-b border-line bg-panel/80 backdrop-blur sticky top-0 z-20">
+    <div className="flex flex-col min-h-screen lg:h-screen lg:overflow-hidden">
+      <header className="border-b border-line bg-panel/80 backdrop-blur sticky top-0 z-20 lg:shrink-0">
         <div className="px-4 sm:px-6 py-2.5 flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-3 min-w-0">
             <Link
@@ -1049,13 +1053,13 @@ export default function Studio({
         </div>
       </header>
 
-      <main className="flex-1 w-full px-4 sm:px-6 py-6">
+      <main className="flex-1 w-full px-4 sm:px-6 py-6 lg:min-h-0 lg:overflow-hidden">
         <div
           ref={mainRef}
-          className="flex flex-col lg:flex-row gap-6 lg:gap-0 items-start"
+          className="flex flex-col lg:flex-row gap-6 lg:gap-0 items-start lg:h-full lg:items-stretch"
         >
         <div
-          className="flex flex-col gap-4 min-w-0 w-full lg:w-[var(--split)] lg:pr-4 lg:sticky lg:top-[68px] lg:max-h-[calc(100vh-92px)] lg:overflow-y-auto overscroll-contain"
+          className="flex flex-col gap-4 min-w-0 w-full lg:w-[var(--split)] lg:pr-4 lg:h-full lg:overflow-y-auto overscroll-contain"
           style={{ "--split": `${split}%` } as CSSProperties}
         >
           {configured === false && (
@@ -1136,7 +1140,10 @@ export default function Studio({
             />
           </div>
           <div className={tab === "analytics" ? "block" : "hidden"}>
-            <AnalyticsPanel projectId={projectId} />
+            <AnalyticsPanel
+              projectId={projectId}
+              active={tab === "analytics"}
+            />
           </div>
         </div>
 
@@ -1153,20 +1160,20 @@ export default function Studio({
           <span className="w-px h-full bg-line group-hover:bg-accent/60 group-active:bg-accent transition-colors" />
         </div>
 
-        <aside className="min-w-0 flex-1 lg:sticky lg:top-[68px] lg:pl-4">
+        <aside className="min-w-0 flex-1 lg:h-full lg:min-h-0 lg:flex lg:flex-col lg:pl-4">
           {tab === "director" ? (
             <>
-              <div className="flex items-center justify-between mb-3 min-h-9">
+              <div className="flex items-center justify-between mb-3 min-h-9 lg:shrink-0">
                 <h2 className="font-semibold text-sm text-ink">Storyboard</h2>
               </div>
               <div
                 ref={setDirectorSlot}
-                className="max-h-[calc(100vh-140px)] overflow-y-auto overscroll-contain pr-1"
+                className="max-h-[calc(100vh-140px)] lg:max-h-none lg:flex-1 lg:min-h-0 overflow-y-auto overscroll-contain pr-1"
               />
             </>
           ) : (
             <>
-              <div className="flex items-center gap-1 mb-3 min-h-9">
+              <div className="flex items-center gap-1 mb-3 min-h-9 lg:shrink-0">
                 {(
                   [
                     { id: "generated", label: "Generated" },
@@ -1204,7 +1211,7 @@ export default function Studio({
                 </p>
               )}
               {assetPane === "prompts" ? (
-                <div className="max-h-[calc(100vh-140px)] overflow-y-auto pr-1 overscroll-contain">
+                <div className="max-h-[calc(100vh-140px)] lg:max-h-none lg:flex-1 lg:min-h-0 overflow-y-auto pr-1 overscroll-contain">
                   <PromptsGallery
                     projectId={projectId}
                     onUse={usePrompt}
@@ -1212,7 +1219,7 @@ export default function Studio({
                   />
                 </div>
               ) : assetPane === "uploaded" ? (
-                <div className="max-h-[calc(100vh-140px)] overflow-y-auto pr-1 overscroll-contain">
+                <div className="max-h-[calc(100vh-140px)] lg:max-h-none lg:flex-1 lg:min-h-0 overflow-y-auto pr-1 overscroll-contain">
                   <UploadsGallery
                     projectId={projectId}
                     reloadNonce={uploadsNonce}
@@ -1230,7 +1237,7 @@ export default function Studio({
                   </p>
                 </div>
               ) : (
-                <div className="max-h-[calc(100vh-140px)] overflow-y-auto pr-1 overscroll-contain">
+                <div className="max-h-[calc(100vh-140px)] lg:max-h-none lg:flex-1 lg:min-h-0 overflow-y-auto pr-1 overscroll-contain">
                   <AssetsGallery
                     tasks={gallery}
                     onReuse={reuseSettings}
@@ -1252,7 +1259,7 @@ export default function Studio({
         </div>
       </main>
 
-      <footer className="border-t border-line-soft py-4 mt-2">
+      <footer className="border-t border-line-soft py-4 mt-2 lg:shrink-0">
         <p className="px-4 sm:px-6 text-2xs text-muted max-w-[90ch]">
           Cost figures are estimates, converted to SGD at a fixed 1.3 × USD. Adjust
           each model&apos;s rates on the{" "}

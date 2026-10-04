@@ -1,6 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import MentionTextArea from "./mention-textarea";
 import Link from "next/link";
@@ -14,10 +20,45 @@ type ScriptEntry = {
   id: string;
   ts: number;
   premise: string;
+  premiseTruncated?: boolean;
+  instruction?: string;
+  parentId?: string;
   script: string;
   estimate: number | null;
   revised?: boolean;
 };
+
+type ScrollSpot = { pre: number; pane: number };
+
+const SCROLL_KEY = "genforge.storyboardScroll";
+const SCROLL_KEEP = 50;
+let scrollSpots: Record<string, ScrollSpot> | null = null;
+let scrollSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+function storyboardScroll(): Record<string, ScrollSpot> {
+  if (!scrollSpots) {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(SCROLL_KEY) || "{}");
+      scrollSpots = parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      scrollSpots = {};
+    }
+  }
+  return scrollSpots!;
+}
+
+function rememberStoryboardScroll(id: string, spot: ScrollSpot) {
+  const spots = storyboardScroll();
+  delete spots[id];
+  spots[id] = spot;
+  if (scrollSaveTimer) clearTimeout(scrollSaveTimer);
+  scrollSaveTimer = setTimeout(() => {
+    try {
+      const recent = Object.entries(spots).slice(-SCROLL_KEEP);
+      localStorage.setItem(SCROLL_KEY, JSON.stringify(Object.fromEntries(recent)));
+    } catch {}
+  }, 300);
+}
 
 export default function DirectorPanel({
   active,
@@ -47,10 +88,12 @@ export default function DirectorPanel({
   const [history, setHistory] = useState<ScriptEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [promptOpenId, setPromptOpenId] = useState<string | null>(null);
   const [creating, setCreating] = useState(true);
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const projectQs = projectId === null ? "none" : projectId;
   const loadedFor = useRef<string | null>(null);
+  const preRef = useRef<HTMLPreElement>(null);
 
   const loadScripts = useCallback(() => {
     return fetch(`/api/director?project=${projectQs}`)
@@ -62,6 +105,9 @@ export default function DirectorPanel({
             id: string;
             createdAt: number;
             premise: string;
+            premiseTruncated?: boolean;
+            instruction?: string;
+            parentId?: string;
             script: string;
             estimate: number | null;
             revised: boolean;
@@ -69,6 +115,9 @@ export default function DirectorPanel({
             id: s.id,
             ts: s.createdAt,
             premise: s.premise,
+            premiseTruncated: s.premiseTruncated,
+            instruction: s.instruction,
+            parentId: s.parentId,
             script: s.script,
             estimate: s.estimate,
             revised: s.revised,
@@ -153,6 +202,29 @@ export default function DirectorPanel({
     : history.find((h) => h.id === selectedId) || null;
   const amending = !creating && !!activeScript;
   const current = activeScript || history[0] || null;
+  const currentId = current?.id ?? null;
+
+  const saveScroll = useCallback(() => {
+    const pre = preRef.current;
+    if (!currentId || !slot || !pre || pre.clientHeight === 0) return;
+    rememberStoryboardScroll(currentId, {
+      pre: pre.scrollTop,
+      pane: slot.scrollTop,
+    });
+  }, [currentId, slot]);
+
+  useLayoutEffect(() => {
+    if (!slot || !currentId) return;
+    const spot = storyboardScroll()[currentId];
+    if (preRef.current) preRef.current.scrollTop = spot?.pre ?? 0;
+    slot.scrollTo({ top: spot?.pane ?? 0 });
+  }, [slot, currentId]);
+
+  useEffect(() => {
+    if (!slot) return;
+    slot.addEventListener("scroll", saveScroll, { passive: true });
+    return () => slot.removeEventListener("scroll", saveScroll);
+  }, [slot, saveScroll]);
 
   async function generate() {
     const text = premise.trim();
@@ -172,6 +244,7 @@ export default function DirectorPanel({
                 extraCast: extraCast.trim() || undefined,
                 baseScript: target.script,
                 instruction: text,
+                parentId: target.id,
                 model,
                 projectId,
               }
@@ -214,6 +287,9 @@ export default function DirectorPanel({
           id: data.id || `${target ? "r" : "g"}${Date.now()}`,
           ts: Date.now(),
           premise: target ? target.premise : text,
+          premiseTruncated: target?.premiseTruncated,
+          instruction: target ? text : undefined,
+          parentId: target?.id,
           script: data.script,
           estimate: data.estimate ?? null,
           revised: Boolean(target),
@@ -345,7 +421,12 @@ export default function DirectorPanel({
                   >
                     {h.revised ? "rev" : "gen"}
                   </span>
-                  <span className="truncate flex-1">{h.premise}</span>
+                  <span
+                    className="truncate flex-1"
+                    title={h.revised && h.instruction ? h.instruction : h.premise}
+                  >
+                    {h.revised && h.instruction ? h.instruction : h.premise}
+                  </span>
                   {h.estimate !== null && (
                     <span className="shrink-0 text-accent">
                       {formatSGD(h.estimate)}
@@ -418,7 +499,82 @@ export default function DirectorPanel({
               </span>
             )}
           </div>
-          <pre className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-ink/90 bg-panel2/50 border border-line rounded-md p-4 max-h-[60vh] overflow-y-auto">
+          {(() => {
+            const parent = current.parentId
+              ? history.find((h) => h.id === current.parentId)
+              : undefined;
+            const open = promptOpenId === current.id;
+            const long =
+              current.premise.length + (current.instruction?.length ?? 0) > 220 ||
+              /\n/.test(current.premise + (current.instruction ?? ""));
+            const clamp = open ? "" : "line-clamp-3";
+            return (
+              <div className="mb-3 rounded-md border border-line bg-panel2/40 p-3">
+                {current.revised && (
+                  <>
+                    <p className="text-2xs font-medium text-warn mb-1">
+                      Amendment
+                    </p>
+                    {current.instruction ? (
+                      <p className={`text-sm text-ink/90 whitespace-pre-wrap ${clamp}`}>
+                        {current.instruction}
+                      </p>
+                    ) : (
+                      <p className="text-xs text-muted">
+                        Not saved. Revisions made before this update did not record their amendment.
+                      </p>
+                    )}
+                  </>
+                )}
+                <p
+                  className={`text-2xs font-medium text-muted mb-1 ${
+                    current.revised ? "mt-3" : ""
+                  }`}
+                >
+                  {current.revised ? "Original premise" : "Premise"}
+                </p>
+                <p className={`text-sm text-ink/90 whitespace-pre-wrap ${clamp}`}>
+                  {current.premise}
+                  {current.premiseTruncated ? "…" : ""}
+                </p>
+                {current.premiseTruncated && (
+                  <p className="mt-1 text-2xs text-muted">
+                    Only the first 120 characters were saved for storyboards made before this update.
+                  </p>
+                )}
+                {(long || parent) && (
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                    {long && (
+                      <Btn
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setPromptOpenId(open ? null : current.id)}
+                      >
+                        {open ? "Show less" : "Show full prompt"}
+                      </Btn>
+                    )}
+                    {parent && (
+                      <Btn
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setSelectedId(parent.id);
+                          setCreating(false);
+                        }}
+                        title="Open the storyboard this one was revised from"
+                      >
+                        Open the version it revised
+                      </Btn>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+          <pre
+            ref={preRef}
+            onScroll={saveScroll}
+            className="whitespace-pre-wrap font-mono text-xs leading-relaxed text-ink/90 bg-panel2/50 border border-line rounded-md p-4 max-h-[60vh] overflow-y-auto">
             {current.script}
           </pre>
         </Panel>

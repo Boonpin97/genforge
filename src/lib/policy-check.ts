@@ -2,6 +2,7 @@ import { ApiErrorLike } from "./errors";
 import {
   durationAllowed,
   durationBounds,
+  longestDurationReasons,
   type ImageModel,
   type VideoModel,
 } from "./model-catalog";
@@ -11,13 +12,24 @@ function fail(message: string): never {
   throw new ApiErrorLike("PolicyViolation", message);
 }
 
+export function dataUrlBytes(url: string | undefined): number {
+  if (!url?.startsWith("data:")) return 0;
+  const comma = url.indexOf(",");
+  if (comma < 0) return 0;
+  const b64 = url.length - comma - 1;
+  return Math.floor((b64 * 3) / 4);
+}
+
+const MB = 1024 * 1024;
+
 export function checkVideo(
   m: VideoModel,
   req: {
+    prompt?: string;
     duration?: number;
     resolution?: string;
     ratio?: string;
-    media: Pick<MediaPayload, "type" | "durationSec">[];
+    media: Pick<MediaPayload, "type" | "durationSec" | "url">[];
     refVideoSec?: number;
   }
 ): void {
@@ -29,8 +41,20 @@ export function checkVideo(
   const first = count("first_frame");
   const last = count("last_frame");
 
+  if (p.maxPromptChars && (req.prompt?.length ?? 0) > p.maxPromptChars)
+    fail(
+      `${m.label} takes prompts up to ${p.maxPromptChars} characters (this one is ${req.prompt!.length}).`
+    );
   if (images > p.refs.maxImages)
-    fail(`${m.label} takes at most ${p.refs.maxImages} reference images (got ${images}).`);
+    fail(
+      p.refs.maxImages
+        ? `${m.label} takes at most ${p.refs.maxImages} reference images (got ${images}).`
+        : `${m.label} does not take reference images.`
+    );
+  if (images < p.refs.minImages)
+    fail(
+      `${m.label} needs at least ${p.refs.minImages} reference image${p.refs.minImages === 1 ? "" : "s"}.`
+    );
   if (videos > p.refs.maxVideos)
     fail(
       p.refs.maxVideos
@@ -47,8 +71,30 @@ export function checkVideo(
     fail(`${m.label} does not take a first frame.`);
   if (last && !p.frames.includes("last_frame"))
     fail(`${m.label} does not take a last frame.`);
+  if (last && !first) fail("A last frame needs a first frame too.");
+  if (p.firstFrameRequired && !first) fail(`${m.label} needs a first-frame image.`);
   if (p.refs.framesExclusiveWithRefs && first + last > 0 && images + videos + audios > 0)
     fail("First and last frames cannot be combined with reference media for this model.");
+
+  if (p.refs.maxImageMB)
+    for (const x of req.media) {
+      if (x.type !== "reference_image" && x.type !== "first_frame" && x.type !== "last_frame")
+        continue;
+      const bytes = dataUrlBytes(x.url);
+      if (bytes > p.refs.maxImageMB * MB)
+        fail(
+          `An image is ${(bytes / MB).toFixed(1)}MB; ${m.label} takes images up to ${p.refs.maxImageMB}MB.`
+        );
+    }
+  if (p.refs.minClipSec)
+    for (const x of req.media) {
+      if (x.type !== "reference_video" && x.type !== "reference_audio") continue;
+      const sec = Number(x.durationSec) || 0;
+      if (sec > 0 && sec < p.refs.minClipSec)
+        fail(
+          `A reference ${x.type === "reference_video" ? "video" : "audio"} clip is ${sec.toFixed(1)}s; ${m.label} needs clips of at least ${p.refs.minClipSec}s.`
+        );
+    }
 
   const refSec = req.refVideoSec ?? 0;
   if (p.refs.maxVideos && refSec > p.refs.maxVideoTotalSec + 0.5)
@@ -66,6 +112,16 @@ export function checkVideo(
             : `${m.label} makes ${d.min}–${d.max}s clips (asked for ${req.duration}s).`
         );
       }
+      const longest = durationBounds(p.durations).max;
+      const reasons = longestDurationReasons(p.longestDurationOnly, {
+        resolution: req.resolution,
+        refImages: images,
+        lastFrame: last > 0,
+      });
+      if (reasons.length && req.duration !== longest)
+        fail(
+          `${m.label} only makes ${longest}s clips with ${reasons.join(" and ")} (asked for ${req.duration}s).`
+        );
       if (p.refs.videoCountsTowardDuration && refSec + req.duration > p.refs.totalBudgetSec + 0.5)
         fail(
           `Reference video (${refSec.toFixed(1)}s) plus ${req.duration}s output exceeds the ${p.refs.totalBudgetSec}s total for ${m.label}.`
@@ -81,15 +137,47 @@ export function checkVideo(
     fail(`${m.label} supports aspect ratios ${p.ratios.join(", ")} only.`);
 }
 
-export function checkImage(m: ImageModel, req: { refs: number; n: number }): void {
+export function checkImage(
+  m: ImageModel,
+  req: {
+    refs: string[];
+    n: number;
+    prompt?: string;
+    negativePrompt?: string;
+    size?: string;
+  }
+): void {
   const p = m.policy;
-  if (req.refs > p.maxRefs)
+  const refs = req.refs.length;
+  if (refs > p.maxRefs)
     fail(
       p.maxRefs
-        ? `${m.label} takes at most ${p.maxRefs} reference images (got ${req.refs}).`
+        ? `${m.label} takes at most ${p.maxRefs} reference images (got ${refs}).`
         : `${m.label} does not take reference images.`
     );
   if (req.n > p.maxN) fail(`${m.label} makes at most ${p.maxN} images per run.`);
+  if (p.maxPromptChars && (req.prompt?.length ?? 0) > p.maxPromptChars)
+    fail(
+      `${m.label} takes prompts up to ${p.maxPromptChars} characters (this one is ${req.prompt!.length}).`
+    );
+  if (p.maxNegativeChars && (req.negativePrompt?.length ?? 0) > p.maxNegativeChars)
+    fail(`${m.label} takes negative prompts up to ${p.maxNegativeChars} characters.`);
+  if (
+    refs &&
+    req.size &&
+    p.textOnlySizes.some((s) => s.toLowerCase() === req.size!.toLowerCase())
+  )
+    fail(
+      `${m.label} renders ${req.size} for text-to-image only — pick another size, or remove the reference images.`
+    );
+  if (p.maxRefMB)
+    for (const url of req.refs) {
+      const bytes = dataUrlBytes(url);
+      if (bytes > p.maxRefMB * MB)
+        fail(
+          `A reference image is ${(bytes / MB).toFixed(1)}MB; ${m.label} takes images up to ${p.maxRefMB}MB.`
+        );
+    }
 }
 
 export function defaultDuration(m: VideoModel): number {

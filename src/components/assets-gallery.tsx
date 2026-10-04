@@ -156,7 +156,11 @@ function Tile({
         {!preview && !active && (
           <span className="text-danger text-lg">✕</span>
         )}
-        <span className="absolute top-1.5 left-1.5 flex items-center gap-1.5 rounded-full bg-black/65 backdrop-blur-sm px-2 py-1 text-2xs font-medium text-white/90">
+        <span
+          className={`absolute top-1.5 left-1.5 flex items-center gap-1.5 rounded-full bg-black/65 backdrop-blur-sm px-2 py-1 text-2xs font-medium ${
+            task.kind === "video" ? "text-cat-video" : "text-cat-image"
+          }`}
+        >
           {active && (
             <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse-dot" />
           )}

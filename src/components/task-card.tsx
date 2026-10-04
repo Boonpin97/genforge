@@ -174,8 +174,22 @@ function VideoPlayer({
 
   useEffect(() => {
     const v = videoRef.current;
-    if (v) v.volume = volume;
+    if (v) {
+      v.volume = volume;
+      v.muted = volume === 0;
+    }
   }, [volume, url]);
+
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onVolumeChange = () => {
+      const next = v.muted ? 0 : v.volume;
+      if (Math.abs(next - videoVolume()) > 0.001) setVideoVolume(next);
+    };
+    v.addEventListener("volumechange", onVolumeChange);
+    return () => v.removeEventListener("volumechange", onVolumeChange);
+  }, [url]);
 
   function changeVolume(next: number) {
     setVolume(next);
@@ -540,6 +554,12 @@ export default function TaskCard({
       </Btn>
     ) : null;
 
+  const paramEntries = Object.entries(task.params || {}).filter(
+    ([k]) =>
+      k !== "rewrite" &&
+      (k !== "duration" || now - task.createdAt <= 86_400_000)
+  );
+
   return (
     <article className="border border-line bg-panel rounded-md animate-rise overflow-hidden">
       <header className="flex items-center gap-3 px-4 py-2.5 border-b border-line flex-wrap">
@@ -598,11 +618,9 @@ export default function TaskCard({
           </button>
         )}
 
-        {task.params && Object.keys(task.params).length > 0 && (
+        {paramEntries.length > 0 && (
           <p className="font-mono text-2xs text-muted flex flex-wrap gap-x-3 gap-y-0.5">
-            {Object.entries(task.params)
-              .filter(([k]) => k !== "rewrite")
-              .map(([k, v]) => (
+            {paramEntries.map(([k, v]) => (
               <span key={k}>
                 {k}=<span className="text-ink/70">{String(v)}</span>
               </span>

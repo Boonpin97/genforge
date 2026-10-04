@@ -1,7 +1,7 @@
 import { modelProvider, readConfig } from "./config";
-import { dashscope, extractError, friendlyError } from "./dashscope";
+import { dashscope, extractError, friendlyError, tokenplan } from "./dashscope";
 import { openrouter } from "./openrouter";
-import type { ModelEntry } from "./model-catalog";
+import { upstreamModelId, type ModelEntry } from "./model-catalog";
 import type { ApiError } from "./types";
 
 export type ChatContent =
@@ -32,7 +32,7 @@ export async function chat(
   const c = await readConfig();
   const provider = modelProvider(c, model);
   const json = {
-    model: model.id,
+    model: upstreamModelId(model),
     messages,
     temperature: opts.temperature ?? 0.7,
     max_tokens: Math.min(
@@ -53,10 +53,15 @@ export async function chat(
   const res =
     provider === "openrouter"
       ? await openrouter("/chat/completions", { method: "POST", json })
-      : await dashscope("/compatible-mode/v1/chat/completions", {
-          method: "POST",
-          json,
-        });
+      : provider === "tokenplan"
+        ? await tokenplan("/compatible-mode/v1/chat/completions", {
+            method: "POST",
+            json,
+          })
+        : await dashscope("/compatible-mode/v1/chat/completions", {
+            method: "POST",
+            json,
+          });
 
   const out = res.body as {
     id?: string;

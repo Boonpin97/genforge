@@ -8,7 +8,7 @@ export const maxDuration = 30;
 export async function POST(req: NextRequest) {
   const body = (await req.json().catch(() => ({}))) as { provider?: string };
   const provider = body.provider as ProviderId;
-  if (!["dashscope", "qwencloud", "openrouter"].includes(provider))
+  if (!["dashscope", "qwencloud", "openrouter", "tokenplan"].includes(provider))
     return NextResponse.json({ ok: false, message: "Unknown provider." }, { status: 400 });
   try {
     const { apiKey, baseUrl } = await providerSettings(provider);

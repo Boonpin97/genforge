@@ -220,8 +220,10 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 export default function AnalyticsPanel({
   projectId,
+  active,
 }: {
   projectId: string | null;
+  active: boolean;
 }) {
   const [records, setRecords] = useState<CostRecord[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -232,18 +234,34 @@ export default function AnalyticsPanel({
   const [kind, setKind] = useState<KindKey>("all");
   const [metric, setMetric] = useState<"cost" | "count">("cost");
   const [allScope, setAllScope] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
 
   useEffect(() => {
+    if (!active) return;
+    const bump = () => {
+      if (document.visibilityState === "visible") setRefreshTick((n) => n + 1);
+    };
+    window.addEventListener("focus", bump);
+    document.addEventListener("visibilitychange", bump);
+    return () => {
+      window.removeEventListener("focus", bump);
+      document.removeEventListener("visibilitychange", bump);
+    };
+  }, [active]);
+
+  useEffect(() => {
+    if (!active) return;
     let cancelled = false;
     const qs = allScope
       ? ""
       : `?project=${projectId === null ? "none" : projectId}`;
-    fetch(`/api/analytics${qs}`)
+    fetch(`/api/analytics${qs}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (cancelled) return;
         setRecords(Array.isArray(d.records) ? d.records : []);
         setLoaded(true);
+        setError(null);
       })
       .catch((e) => {
         if (!cancelled)
@@ -252,7 +270,7 @@ export default function AnalyticsPanel({
     return () => {
       cancelled = true;
     };
-  }, [allScope, projectId]);
+  }, [allScope, projectId, active, refreshTick]);
 
   const { from, to } = rangeBounds(range, customFrom, customTo);
 

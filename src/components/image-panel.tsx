@@ -53,9 +53,70 @@ const SIZE_LABELS: Record<string, string> = {
   "1155*866": "4:3 · 1155×866",
   "866*1155": "3:4 · 866×1155",
   "1000*1000": "1:1 · 1000×1000",
+  "1K": "1K · about 1024×1024",
+  "2K": "2K · about 2048×2048",
+  "4K": "4K · about 4096×4096 (text to image only)",
+  "2048*2048": "1:1 · 2048×2048",
+  "2688*1536": "16:9 · 2688×1536",
+  "1536*2688": "9:16 · 1536×2688",
+  "2368*1728": "4:3 · 2368×1728",
+  "1728*2368": "3:4 · 1728×2368",
 };
 
 let idCounter = 0;
+async function fitRefImage(
+  url: string,
+  minSide: number,
+  maxSide: number,
+  noAlpha: boolean
+): Promise<{ url: string; size?: [number, number]; to?: [number, number]; flattened?: boolean }> {
+  if (!minSide && !maxSide && !noAlpha) return { url };
+  const img = new Image();
+  img.decoding = "async";
+  img.src = url;
+  try {
+    await img.decode();
+  } catch {
+    return { url };
+  }
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!w || !h) return { url };
+  const scale =
+    minSide && Math.min(w, h) < minSide
+      ? minSide / Math.min(w, h)
+      : maxSide && Math.max(w, h) > maxSide
+        ? maxSide / Math.max(w, h)
+        : 1;
+  const flatten = noAlpha && !/^data:image\/jpe?g/i.test(url);
+  if (scale === 1 && !flatten) return { url, size: [w, h] };
+  const W = scale > 1 ? Math.ceil(w * scale) : Math.floor(w * scale);
+  const H = scale > 1 ? Math.ceil(h * scale) : Math.floor(h * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { url, size: [w, h] };
+  if (flatten) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, W, H);
+  }
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, W, H);
+  try {
+    return {
+      url: flatten
+        ? canvas.toDataURL("image/jpeg", 0.95)
+        : canvas.toDataURL("image/png"),
+      size: [w, h],
+      to: scale === 1 ? undefined : [W, H],
+      flattened: flatten,
+    };
+  } catch {
+    return { url, size: [w, h] };
+  }
+}
+
 const nextId = () => `i${Date.now()}-${idCounter++}`;
 
 export default function ImagePanel({
@@ -91,6 +152,11 @@ export default function ImagePanel({
   const policy = entry?.policy ?? FALLBACK_POLICY;
   const MAX_IMAGES = policy.maxRefs;
   const MAX_BYTES = policy.maxRefMB * 1024 * 1024;
+  const MIN_REF_SIDE = policy.minRefSide;
+  const MAX_REF_SIDE = policy.maxRefSide;
+  const MAX_REF_ASPECT = policy.maxRefAspect;
+  const REF_NO_ALPHA = policy.refNoAlpha;
+  const modelLabel = entry?.label ?? "This model";
   const overRefs = Math.max(0, items.length - MAX_IMAGES);
 
   useEffect(() => {
@@ -368,6 +434,58 @@ export default function ImagePanel({
         ? lines.join("") + text.trim()
         : text.trim();
       const readyNow = working.filter((i) => i.state === "ready" && i.dataUrl);
+      if (policy.maxPromptChars && finalPrompt.length > policy.maxPromptChars) {
+        setNotice(
+          `${modelLabel} takes prompts up to ${policy.maxPromptChars} characters — this one is ${finalPrompt.length} with the character lines added.`
+        );
+        return;
+      }
+      if (
+        policy.negativePrompt &&
+        policy.maxNegativeChars &&
+        negativePrompt.trim().length > policy.maxNegativeChars
+      ) {
+        setNotice(
+          `${modelLabel} takes negative prompts up to ${policy.maxNegativeChars} characters.`
+        );
+        return;
+      }
+      if (
+        readyNow.length &&
+        policy.textOnlySizes.some((s) => s.toLowerCase() === size.toLowerCase())
+      ) {
+        setNotice(
+          `${modelLabel} renders ${size} for text-to-image only — pick another size, or remove the reference images.`
+        );
+        return;
+      }
+      const fittedRefs = new Map<string, string>();
+      const fitNotes: string[] = [];
+      for (const i of readyNow) {
+        const fit = await fitRefImage(
+          i.dataUrl!,
+          MIN_REF_SIDE,
+          MAX_REF_SIDE,
+          REF_NO_ALPHA
+        );
+        if (fit.size && MAX_REF_ASPECT) {
+          const [w, h] = fit.size;
+          if (Math.max(w, h) / Math.min(w, h) > MAX_REF_ASPECT) {
+            setNotice(
+              `${i.name} is ${w}×${h} — ${modelLabel} only takes images between 1:${MAX_REF_ASPECT} and ${MAX_REF_ASPECT}:1. Crop it and add it again.`
+            );
+            return;
+          }
+        }
+        if (fit.to && fit.size)
+          fitNotes.push(
+            `${i.name} ${fit.to[0] > fit.size[0] ? "upscaled" : "downscaled"} from ${fit.size[0]}×${fit.size[1]} to ${fit.to[0]}×${fit.to[1]}`
+          );
+        if (fit.flattened) fitNotes.push(`${i.name} flattened onto white (no transparency allowed)`);
+        fittedRefs.set(i.id, fit.url);
+      }
+      if (fitNotes.length)
+        setNotice(`Adjusted for ${modelLabel}: ${fitNotes.join("; ")}`);
       await onSubmit({
         kind: "image",
         prompt: finalPrompt,
@@ -375,7 +493,7 @@ export default function ImagePanel({
         model,
         images: readyNow.map((i) => ({
           name: i.name,
-          url: i.dataUrl!,
+          url: fittedRefs.get(i.id) ?? i.dataUrl!,
           characterId: i.characterId,
         })),
         size,
@@ -431,7 +549,7 @@ export default function ImagePanel({
           <Field label="Negative prompt" hint="Optional, up to 500 characters">
             <TextInput
               value={negativePrompt}
-              maxLength={500}
+              maxLength={policy.maxNegativeChars || 2000}
               onChange={(e) => setNegativePrompt(e.target.value)}
               placeholder="low quality, distorted limbs, blurry text…"
             />

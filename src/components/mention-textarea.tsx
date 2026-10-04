@@ -535,9 +535,10 @@ export default function MentionTextArea({
         ...characters
           .filter(
             (c) =>
-              !q ||
-              c.name.toLowerCase().includes(q) ||
-              (c.description || "").toLowerCase().includes(q)
+              !c.hidden &&
+              (!q ||
+                c.name.toLowerCase().includes(q) ||
+                (c.description || "").toLowerCase().includes(q))
           )
           .map((c) => ({
             kind: "character" as const,
@@ -709,7 +710,7 @@ export default function MentionTextArea({
             if (chipCharacters && onPickCharacter) {
               for (const c of characters) {
                 const name = (c.name || "").trim();
-                if (!name) continue;
+                if (!name || c.hidden) continue;
                 const re = new RegExp(`(?<![\\w])${escapeRe(name)}(?![\\w-])`);
                 if (re.test(s.text) && !re.test(prev)) onPickCharacter(c);
               }

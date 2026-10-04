@@ -4,5 +4,8 @@ import { parseProjectParam } from "@/lib/projects";
 
 export async function GET(req: NextRequest) {
   const project = parseProjectParam(req.nextUrl.searchParams.get("project"));
-  return NextResponse.json({ records: await listCostRecords(project) });
+  return NextResponse.json(
+    { records: await listCostRecords(project) },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }

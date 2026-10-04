@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getCharacterImage } from "@/lib/characters";
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string; index: string }> }
 ) {
   const { id, index } = await params;
@@ -13,7 +13,11 @@ export async function GET(
       { status: 400 }
     );
   }
-  const img = await getCharacterImage(id, i);
+  const img = await getCharacterImage(
+    id,
+    i,
+    req.nextUrl.searchParams.get("look")
+  );
   if (!img) {
     return NextResponse.json(
       { code: "NotFound", message: "Image not found." },

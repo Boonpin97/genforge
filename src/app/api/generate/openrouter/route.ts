@@ -68,7 +68,13 @@ export async function POST(req: NextRequest) {
     const entry = await requireModel(body.model, "image");
     if (entry.provider !== "openrouter")
       throw new ApiErrorLike("BadRequest", `${entry.label} is not an OpenRouter model.`);
-    checkImage(entry, { refs: refs.length, n });
+    checkImage(entry, {
+      refs,
+      n,
+      prompt,
+      negativePrompt: body.negativePrompt,
+      size: body.size,
+    });
     const model = entry.id;
     const images: string[] = [];
     let cost: number | null = null;

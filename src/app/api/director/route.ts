@@ -23,6 +23,7 @@ type Body = {
   extraCast?: string;
   baseScript?: string;
   instruction?: string;
+  parentId?: string;
   model?: string;
   projectId?: string | null;
 };
@@ -108,6 +109,11 @@ export async function POST(req: NextRequest) {
         : null,
       script,
       revised: Boolean(baseScript && instruction),
+      instruction: baseScript ? instruction : undefined,
+      parentId:
+        baseScript && typeof body.parentId === "string"
+          ? body.parentId
+          : undefined,
       projectId: typeof body.projectId === "string" ? body.projectId : null,
     }).catch(() => null);
 

@@ -35,6 +35,8 @@ const PROVIDER_HINTS: Record<ProviderId, string> = {
     "An alternative endpoint for Wan video only. It is the only one that supports first and last frame mode for Wan.",
   openrouter:
     "One key for every non-Qwen model: Veo, Kling, Seedance, Hailuo, Runway, Grok, Nano Banana, GPT Image, FLUX, Claude, GPT, Gemini and more.",
+  tokenplan:
+    "Model Studio's Token Plan subscription (Singapore only), billed in Credits from a monthly quota instead of dollars. Keys start with sk-sp- and only work with the Token Plan base URL — they are not interchangeable with pay-as-you-go DashScope keys. Runs HappyHorse video, Wan 2.7 Image Pro and Qwen 3.8 Max; qwen-image-2.0-pro needs the Team Edition. Alibaba limits the plan to interactive use in AI tools, so heavy backend use risks suspension.",
 };
 
 function priceLine(m: ModelEntry): string {
@@ -85,9 +87,17 @@ const VIDEO_FIELDS: FieldSpec[] = [
   { kind: "durations" },
   { kind: "list", path: ["policy", "resolutions"], label: "Resolutions", hint: "comma separated" },
   { kind: "list", path: ["policy", "ratios"], label: "Aspect ratios", hint: "comma separated" },
+  { kind: "list", path: ["policy", "longestDurationOnly"], label: "Needs the longest duration with", hint: "resolutions, refs, last_frame" },
   { kind: "frames" },
+  { kind: "bool", path: ["policy", "firstFrameRequired"], label: "A first frame is required" },
+  { kind: "num", path: ["policy", "maxPromptChars"], label: "Prompt length, max", hint: "characters, 0 = none" },
+  { kind: "num", path: ["policy", "refs", "minImages"], label: "Reference images, min" },
   { kind: "num", path: ["policy", "refs", "maxImages"], label: "Reference images, max" },
   { kind: "num", path: ["policy", "refs", "maxImageMB"], label: "Image size limit", hint: "MB" },
+  { kind: "num", path: ["policy", "refs", "minImageSide"], label: "Image shortest side, min", hint: "px, 0 = none; smaller images are upscaled" },
+  { kind: "num", path: ["policy", "refs", "maxImageSide"], label: "Image longest side, max", hint: "px, 0 = none; larger images are downscaled" },
+  { kind: "num", path: ["policy", "refs", "maxImageAspect"], label: "Image aspect ratio, max", hint: "long÷short, 0 = none" },
+  { kind: "num", path: ["policy", "refs", "minClipSec"], label: "Video and audio clip length, min", hint: "seconds, 0 = none" },
   { kind: "num", path: ["policy", "refs", "maxVideos"], label: "Reference videos, max", hint: "DashScope only" },
   { kind: "num", path: ["policy", "refs", "maxVideoTotalSec"], label: "Reference video length, combined", hint: "seconds" },
   { kind: "num", path: ["policy", "refs", "maxVideoMB"], label: "Video size limit", hint: "MB" },
@@ -109,8 +119,15 @@ const VIDEO_FIELDS: FieldSpec[] = [
 const IMAGE_FIELDS: FieldSpec[] = [
   { kind: "num", path: ["policy", "maxRefs"], label: "Reference images, max" },
   { kind: "num", path: ["policy", "maxRefMB"], label: "Image size limit", hint: "MB" },
+  { kind: "num", path: ["policy", "minRefSide"], label: "Reference shortest side, min", hint: "px, 0 = none; smaller images are upscaled" },
+  { kind: "num", path: ["policy", "maxRefSide"], label: "Reference longest side, max", hint: "px, 0 = none; larger images are downscaled" },
+  { kind: "num", path: ["policy", "maxRefAspect"], label: "Reference aspect ratio, max", hint: "long÷short, 0 = none" },
+  { kind: "bool", path: ["policy", "refNoAlpha"], label: "References cannot have transparency" },
   { kind: "num", path: ["policy", "maxN"], label: "Images per run, max", hint: "1–6" },
   { kind: "list", path: ["policy", "sizes"], label: "Sizes", hint: "auto, or W*H, comma separated" },
+  { kind: "list", path: ["policy", "textOnlySizes"], label: "Sizes for text-to-image only", hint: "comma separated" },
+  { kind: "num", path: ["policy", "maxPromptChars"], label: "Prompt length, max", hint: "characters, 0 = none" },
+  { kind: "num", path: ["policy", "maxNegativeChars"], label: "Negative prompt length, max", hint: "characters, 0 = none" },
   { kind: "bool", path: ["policy", "negativePrompt"], label: "Accepts a negative prompt" },
   { kind: "bool", path: ["policy", "promptExtend"], label: "Has a prompt rewrite option" },
   { kind: "bool", path: ["policy", "watermark"], label: "Has a watermark option" },
@@ -884,6 +901,12 @@ export default function ModelsPage() {
                 <ProviderCard
                   id="openrouter"
                   info={cfg.providers.openrouter}
+                  busy={busy}
+                  onSave={save}
+                />
+                <ProviderCard
+                  id="tokenplan"
+                  info={cfg.providers.tokenplan}
                   busy={busy}
                   onSave={save}
                 />

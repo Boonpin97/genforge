@@ -21,7 +21,7 @@ import { sanitizePolicy, sanitizePricing } from "@/lib/model-sanitize";
 
 export const dynamic = "force-dynamic";
 
-const PROVIDERS: ProviderId[] = ["dashscope", "qwencloud", "openrouter"];
+const PROVIDERS: ProviderId[] = ["dashscope", "qwencloud", "openrouter", "tokenplan"];
 const ID_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._:-]+)?$/;
 
 type ModelPatch = {

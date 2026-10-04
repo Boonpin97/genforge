@@ -46,6 +46,14 @@ export type TaskStatus =
   | "succeeded"
   | "failed";
 
+export type CharacterLook = {
+  id: string;
+  name: string;
+  description: string;
+  imageCount: number;
+  updatedAt?: number;
+};
+
 export type Character = {
   id: string;
   name: string;
@@ -55,7 +63,36 @@ export type Character = {
   createdAt: number;
   updatedAt?: number;
   projectId?: string | null;
+  hidden?: boolean;
+  looks?: CharacterLook[];
+  activeLookId?: string;
 };
+
+export function characterLooks(c: Character): CharacterLook[] {
+  return c.looks?.length
+    ? c.looks
+    : [
+        {
+          id: "main",
+          name: "Default",
+          description: c.description,
+          imageCount: c.imageCount,
+        },
+      ];
+}
+
+export function activeLook(c: Character): CharacterLook {
+  const looks = characterLooks(c);
+  return looks.find((l) => l.id === c.activeLookId) ?? looks[0];
+}
+
+export function charLookImgUrl(
+  c: Pick<Character, "id" | "createdAt" | "updatedAt">,
+  lookId: string,
+  index: number
+): string {
+  return `/api/characters/${c.id}/image/${index}?look=${encodeURIComponent(lookId)}&v=${c.updatedAt ?? c.createdAt}`;
+}
 
 export function charImgUrl(
   c: Pick<Character, "id" | "createdAt" | "updatedAt">,
@@ -133,6 +170,9 @@ export type DirectorRun = {
   createdAt: number;
   model: string;
   premise: string;
+  fullPremise?: string;
+  instruction?: string;
+  parentId?: string;
   estimate: number | null;
   tokens?: number | null;
   script?: string;

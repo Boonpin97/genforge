@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { dashscope, extractError } from "@/lib/dashscope";
+import { dashscope, extractError, tokenplan } from "@/lib/dashscope";
 import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { requireModel } from "@/lib/config";
 import { checkImage } from "@/lib/policy-check";
 import { estimateImage } from "@/lib/estimate";
+import { upstreamModelId } from "@/lib/model-catalog";
 import type { ImageUsage } from "@/lib/types";
 
 export const maxDuration = 300;
@@ -43,11 +44,18 @@ export async function POST(req: NextRequest) {
   );
   try {
     const entry = await requireModel(body.model, "image");
-    if (entry.provider !== "alibaba")
+    if (entry.provider === "openrouter")
       throw new ApiErrorLike("BadRequest", `${entry.label} is an OpenRouter model.`);
+    const call = entry.provider === "tokenplan" ? tokenplan : dashscope;
     const policy = entry.policy;
     const n = typeof body.n === "number" ? body.n : 1;
-    checkImage(entry, { refs: images.length, n });
+    checkImage(entry, {
+      refs: images,
+      n,
+      prompt,
+      negativePrompt: body.negativePrompt,
+      size: body.size,
+    });
     const content: Record<string, string>[] = [
       ...images.map((image) => ({ image })),
       { text: prompt },
@@ -63,12 +71,12 @@ export async function POST(req: NextRequest) {
       parameters.watermark = body.watermark;
     if (typeof body.seed === "number" && policy.seed) parameters.seed = body.seed;
 
-    const res = await dashscope(
+    const res = await call(
       "/api/v1/services/aigc/multimodal-generation/generation",
       {
         method: "POST",
         json: {
-          model: entry.id,
+          model: upstreamModelId(entry),
           input: { messages: [{ role: "user", content }] },
           parameters,
         },

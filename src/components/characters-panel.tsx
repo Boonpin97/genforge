@@ -11,6 +11,7 @@ import DropZone, {
 } from "./drop-zone";
 import {
   Btn,
+  Chip,
   Field,
   Panel,
   RelocateSelect,
@@ -18,11 +19,17 @@ import {
   TextInput,
 } from "./ui";
 import type { Character } from "@/lib/types";
-import { charImgUrl } from "@/lib/types";
+import {
+  activeLook,
+  charImgUrl,
+  charLookImgUrl,
+  characterLooks,
+} from "@/lib/types";
 
 const MAX_IMAGES = 6;
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_AUDIO_BYTES = 15 * 1024 * 1024;
+const MAX_LOOKS = 12;
 
 type PendingImage = { file: File; url: string };
 
@@ -45,6 +52,8 @@ export default function CharactersPanel({
   const [existingImages, setExistingImages] = useState<number[]>([]);
   const [editHadAudio, setEditHadAudio] = useState(false);
   const [removeExistingAudio, setRemoveExistingAudio] = useState(false);
+  const [editingLookId, setEditingLookId] = useState<string | null>(null);
+  const [lookName, setLookName] = useState("");
 
   const totalImages = existingImages.length + imageFiles.length;
 
@@ -127,16 +136,86 @@ export default function CharactersPanel({
     setExistingImages([]);
     setEditHadAudio(false);
     setRemoveExistingAudio(false);
+    setEditingLookId(null);
+    setLookName("");
   }
 
-  function startEdit(c: Character) {
+  function loadLook(c: Character, lookId: string) {
+    setImageFiles((list) => {
+      list.forEach((p) => URL.revokeObjectURL(p.url));
+      return [];
+    });
+    setEditingLookId(lookId);
+    if (lookId === "new") {
+      setLookName("");
+      setDescription("");
+      setExistingImages([]);
+      return;
+    }
+    const look =
+      characterLooks(c).find((l) => l.id === lookId) ?? activeLook(c);
+    setLookName(look.name);
+    setDescription(look.description);
+    setExistingImages(
+      Array.from({ length: look.imageCount }, (_, i) => i)
+    );
+  }
+
+  function startEdit(c: Character, lookId?: string) {
     setNotice(null);
     resetForm();
     setEditingId(c.id);
     setName(c.name);
-    setDescription(c.description);
-    setExistingImages(c.imageCount ? Array.from({ length: c.imageCount }, (_, i) => i) : []);
     setEditHadAudio(c.hasAudio);
+    loadLook(c, lookId ?? activeLook(c).id);
+  }
+
+  function replaceCharacter(next: Character) {
+    setCharacters((list) => list.map((x) => (x.id === next.id ? next : x)));
+  }
+
+  async function activateLook(c: Character, lookId: string) {
+    if (activeLook(c).id === lookId) return;
+    const form = new FormData();
+    form.append("activeLook", lookId);
+    const res = await fetch(`/api/characters/${c.id}`, {
+      method: "PATCH",
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.character) {
+      setNotice({
+        kind: "err",
+        msg: data.message || `Could not switch ${c.name}'s look`,
+      });
+      return;
+    }
+    replaceCharacter(data.character);
+    const look = activeLook(data.character);
+    setNotice({
+      kind: "ok",
+      msg: `${c.name} now uses the "${look.name}" look in new generations`,
+    });
+  }
+
+  async function removeLook(c: Character, lookId: string) {
+    const form = new FormData();
+    form.append("deleteLook", lookId);
+    const res = await fetch(`/api/characters/${c.id}`, {
+      method: "PATCH",
+      body: form,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.character) {
+      setNotice({
+        kind: "err",
+        msg: data.message || "Could not delete this look",
+      });
+      return;
+    }
+    replaceCharacter(data.character);
+    loadLook(data.character, activeLook(data.character).id);
+    setNotice({ kind: "ok", msg: "Look deleted" });
   }
 
   function addImages(files: File[]) {
@@ -231,13 +310,12 @@ export default function CharactersPanel({
     setNotice(null);
     try {
       const imageDataUrls: string[] = [];
-      const editingChar = editingId
-        ? characters.find((x) => x.id === editingId)
-        : undefined;
-      if (editingChar) {
+      if (editingChar && editingLookId && editingLookId !== "new") {
         for (const idx of existingImages.slice(0, 3)) {
           try {
-            const res = await fetch(charImgUrl(editingChar, idx));
+            const res = await fetch(
+              charLookImgUrl(editingChar, editingLookId, idx)
+            );
             if (res.ok) imageDataUrls.push(await blobToDataUrl(await res.blob()));
           } catch {}
         }
@@ -299,9 +377,11 @@ export default function CharactersPanel({
       const form = new FormData();
       form.append("name", name.trim());
       form.append("description", description.trim());
+      form.append("lookName", lookName.trim());
       let url: string;
       let method: string;
       if (editingId) {
+        if (editingLookId) form.append("lookId", editingLookId);
         form.append("keepImages", JSON.stringify(existingImages));
         imageFiles.forEach((p) => form.append("images", p.file));
         if (audioFile) form.append("audio", audioFile);
@@ -324,13 +404,35 @@ export default function CharactersPanel({
       }
       setNotice({
         kind: "ok",
-        msg: `Character "${data.character.name}" ${editingId ? "updated" : "saved"}`,
+        msg:
+          editingLookId === "new"
+            ? `New look added to ${data.character.name} — pick it under Saved characters to make it active`
+            : `Character "${data.character.name}" ${editingId ? "updated" : "saved"}`,
       });
       resetForm();
       await refresh();
     } finally {
       setBusy(false);
     }
+  }
+
+  async function toggleHidden(c: Character) {
+    const form = new FormData();
+    form.append("hidden", c.hidden ? "false" : "true");
+    const res = await fetch(`/api/characters/${c.id}`, {
+      method: "PATCH",
+      body: form,
+    });
+    if (!res.ok) {
+      setNotice({
+        kind: "err",
+        msg: `Could not ${c.hidden ? "unhide" : "hide"} ${c.name}`,
+      });
+      return;
+    }
+    setCharacters((list) =>
+      list.map((x) => (x.id === c.id ? { ...x, hidden: !c.hidden } : x))
+    );
   }
 
   async function removeCharacter(c: Character) {
@@ -342,6 +444,12 @@ export default function CharactersPanel({
       setNotice({ kind: "err", msg: `Delete failed (HTTP ${res.status})` });
     }
   }
+
+  const editingChar = editingId
+    ? characters.find((x) => x.id === editingId)
+    : undefined;
+  const editingLooks = editingChar ? characterLooks(editingChar) : [];
+  const editingActiveId = editingChar ? activeLook(editingChar).id : null;
 
   return (
     <div className="flex flex-col gap-4">
@@ -417,6 +525,83 @@ export default function CharactersPanel({
             )}
           </Field>
         </div>
+        {editingChar && (
+          <div className="mt-4">
+            <div className="flex items-baseline justify-between gap-3 mb-2">
+              <span className="text-xs font-medium text-ink/80">Looks</span>
+              <span className="text-2xs text-muted">
+                Name and voice are shared. Each look has its own description and images.
+              </span>
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {editingLooks.map((l) => (
+                <Chip
+                  key={l.id}
+                  active={editingLookId === l.id}
+                  onClick={() => loadLook(editingChar, l.id)}
+                  title={`Edit the "${l.name}" look — unsaved changes to the current look are discarded`}
+                >
+                  {l.name}
+                  {editingActiveId === l.id && (
+                    <span className="text-2xs text-ok">active</span>
+                  )}
+                </Chip>
+              ))}
+              {editingLooks.length < MAX_LOOKS && (
+                <Chip
+                  active={editingLookId === "new"}
+                  onClick={() => loadLook(editingChar, "new")}
+                  title="Add another look with its own description and reference images"
+                >
+                  ＋ New look
+                </Chip>
+              )}
+            </div>
+          </div>
+        )}
+        <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4 items-end">
+          <Field
+            label="Look name"
+            hint={editingId ? "Up to 40 characters" : "Optional, e.g. Default"}
+          >
+            <TextInput
+              value={lookName}
+              maxLength={40}
+              onChange={(e) => setLookName(e.target.value)}
+              placeholder={
+                editingLookId === "new" ? "e.g. Winter coat" : "Default"
+              }
+            />
+          </Field>
+          {editingChar && editingLookId && editingLookId !== "new" && (
+            <div className="flex items-center gap-1.5 flex-wrap min-h-9">
+              {editingActiveId !== editingLookId ? (
+                <Btn
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => void activateLook(editingChar, editingLookId)}
+                  title="Use this look's description and images whenever this character is referenced"
+                >
+                  Make active
+                </Btn>
+              ) : (
+                <span className="text-2xs text-muted">
+                  Active look, used in new generations
+                </span>
+              )}
+              {editingLooks.length > 1 && (
+                <Btn
+                  variant="danger"
+                  size="sm"
+                  onClick={() => void removeLook(editingChar, editingLookId)}
+                  title="Delete this look and its reference images"
+                >
+                  Delete look
+                </Btn>
+              )}
+            </div>
+          )}
+        </div>
         <div className="mt-4">
           <Field label="Appearance / persona description" hint="Added to the prompt">
             <TextArea
@@ -463,11 +648,9 @@ export default function CharactersPanel({
                     <div className="aspect-square bg-black/40 overflow-hidden">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={charImgUrl(
-                          characters.find((x) => x.id === editingId) ?? {
-                            id: editingId,
-                            createdAt: 0,
-                          },
+                        src={charLookImgUrl(
+                          editingChar ?? { id: editingId, createdAt: 0 },
+                          editingLookId ?? "main",
                           idx
                         )}
                         alt={`image ${idx + 1}`}
@@ -536,7 +719,13 @@ export default function CharactersPanel({
         )}
         <div className="mt-4">
           <Btn onClick={saveCharacter} disabled={busy}>
-            {busy ? "Saving…" : editingId ? "Save changes" : "Save character"}
+            {busy
+              ? "Saving…"
+              : editingLookId === "new"
+                ? "Save new look"
+                : editingId
+                  ? "Save changes"
+                  : "Save character"}
           </Btn>
         </div>
       </Panel>
@@ -573,6 +762,14 @@ export default function CharactersPanel({
                         voice
                       </span>
                     )}
+                    {c.hidden && (
+                      <span
+                        className="text-2xs font-medium text-muted bg-panel rounded-full px-2 py-0.5"
+                        title="Kept in this list, but not offered in @ mentions or reference picking"
+                      >
+                        hidden
+                      </span>
+                    )}
                     <span className="ml-auto shrink-0 text-2xs text-muted">
                       {c.imageCount} image{c.imageCount === 1 ? "" : "s"}
                     </span>
@@ -580,6 +777,28 @@ export default function CharactersPanel({
                   <p className="text-2xs text-muted line-clamp-2 mt-1">
                     {c.description || "No description yet"}
                   </p>
+                  {characterLooks(c).length > 1 && (
+                    <div
+                      className="flex items-center gap-1.5 mt-2 flex-wrap"
+                      role="group"
+                      aria-label={`${c.name}'s active look`}
+                    >
+                      {characterLooks(c).map((l) => (
+                        <Chip
+                          key={l.id}
+                          active={activeLook(c).id === l.id}
+                          onClick={() => void activateLook(c, l.id)}
+                          title={
+                            activeLook(c).id === l.id
+                              ? `"${l.name}" is the active look`
+                              : `Use "${l.name}" whenever ${c.name} is referenced`
+                          }
+                        >
+                          {l.name}
+                        </Chip>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
                     <Btn
                       variant="ghost"
@@ -589,6 +808,16 @@ export default function CharactersPanel({
                     >
                       Edit
                     </Btn>
+                    {characterLooks(c).length < MAX_LOOKS && (
+                      <Btn
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => startEdit(c, "new")}
+                        title="Add another look with its own description and reference images"
+                      >
+                        Add look
+                      </Btn>
+                    )}
                     <RelocateSelect
                       projects={projects}
                       currentProjectId={projectId}
@@ -599,6 +828,18 @@ export default function CharactersPanel({
                         void relocateCharacter(c.id, action, target)
                       }
                     />
+                    <Btn
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => void toggleHidden(c)}
+                      title={
+                        c.hidden
+                          ? "Offer this character in @ mentions and reference picking again"
+                          : "Keep it in this list but stop offering it in @ mentions and reference picking"
+                      }
+                    >
+                      {c.hidden ? "Unhide" : "Hide"}
+                    </Btn>
                     <Btn
                       variant="danger"
                       size="sm"

@@ -50,19 +50,18 @@ export async function POST(req: NextRequest) {
     const urls = (body.images || []).filter(isImageUrl);
     const first = isImageUrl(body.firstFrame) ? body.firstFrame : null;
     const last = isImageUrl(body.lastFrame) ? body.lastFrame : null;
-    const media: Pick<MediaPayload, "type">[] = [
-      ...urls.map(() => ({ type: "reference_image" as const })),
-      ...(first ? [{ type: "first_frame" as const }] : []),
-      ...(last ? [{ type: "last_frame" as const }] : []),
+    const media: Pick<MediaPayload, "type" | "url">[] = [
+      ...urls.map((url) => ({ type: "reference_image" as const, url })),
+      ...(first ? [{ type: "first_frame" as const, url: first }] : []),
+      ...(last ? [{ type: "last_frame" as const, url: last }] : []),
     ];
     checkVideo(entry, {
+      prompt,
       duration: body.duration,
       resolution: body.resolution,
       ratio: body.ratio,
       media,
     });
-    if (last && !first)
-      throw new ApiErrorLike("PolicyViolation", "A last frame needs a first frame too.");
 
     const request: Record<string, unknown> = { model: entry.id, prompt };
     const frames: Record<string, unknown>[] = [];

@@ -20,6 +20,7 @@ export async function POST(req: NextRequest) {
     const form = await req.formData();
     const name = String(form.get("name") || "").trim();
     const description = String(form.get("description") || "").trim();
+    const lookName = String(form.get("lookName") || "").trim();
 
     if (!name) {
       return NextResponse.json(
@@ -27,11 +28,12 @@ export async function POST(req: NextRequest) {
         { status: 400 }
       );
     }
-    if (name.length > 60 || description.length > 600) {
+    if (name.length > 60 || description.length > 600 || lookName.length > 40) {
       return NextResponse.json(
         {
           code: "BadRequest",
-          message: "Name must be ≤60 chars, description ≤600 chars.",
+          message:
+            "Name must be ≤60 chars, look name ≤40 chars, description ≤600 chars.",
         },
         { status: 400 }
       );
@@ -97,6 +99,7 @@ export async function POST(req: NextRequest) {
     const character = await createCharacter({
       name,
       description,
+      lookName,
       images,
       audio,
       projectId: form.get("projectId")

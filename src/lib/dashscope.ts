@@ -18,6 +18,8 @@ export async function isConfigured(): Promise<boolean> {
 
 export type VideoProvider = "dashscope" | "qwencloud";
 
+export type DashService = VideoProvider | "tokenplan";
+
 export async function getVideoProvider(): Promise<VideoProvider> {
   return (await readConfig()).videoProvider;
 }
@@ -27,8 +29,14 @@ export type DashResponse = {
   body: Record<string, unknown>;
 };
 
+const SERVICE_LABELS: Record<DashService, string> = {
+  dashscope: "DashScope",
+  qwencloud: "QwenCloud",
+  tokenplan: "the Token Plan endpoint",
+};
+
 async function serviceFetch(
-  svc: VideoProvider,
+  svc: DashService,
   path: string,
   init: {
     method?: string;
@@ -54,7 +62,7 @@ async function serviceFetch(
   } catch (err) {
     throw new ApiErrorLike(
       "NetworkError",
-      `Failed to reach ${svc === "qwencloud" ? "QwenCloud" : "DashScope"} (${base}): ${
+      `Failed to reach ${SERVICE_LABELS[svc]} (${base}): ${
         err instanceof Error ? err.message : String(err)
       }`
     );
@@ -94,8 +102,19 @@ export async function qwencloud(
   return serviceFetch("qwencloud", path, init);
 }
 
+export async function tokenplan(
+  path: string,
+  init: {
+    method?: string;
+    json?: unknown;
+    headers?: Record<string, string>;
+  } = {}
+): Promise<DashResponse> {
+  return serviceFetch("tokenplan", path, init);
+}
+
 export async function videoService(
-  provider: VideoProvider,
+  provider: DashService,
   path: string,
   init: {
     method?: string;

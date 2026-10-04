@@ -12,6 +12,10 @@
     "openrouter": {
       "apiKey": "",
       "baseUrl": "https://openrouter.ai/api/v1"
+    },
+    "tokenplan": {
+      "apiKey": "",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com"
     }
   },
   "videoProvider": "dashscope",
@@ -32,6 +36,9 @@
           "min": 2,
           "max": 30
         },
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 20000,
         "smartDuration": true,
         "resolutions": [
           "480P",
@@ -40,6 +47,7 @@
         ],
         "ratios": [
           "adaptive",
+          "21:9",
           "16:9",
           "4:3",
           "1:1",
@@ -53,12 +61,17 @@
         ],
         "framesRequireQwencloud": true,
         "refs": {
+          "minImages": 0,
           "maxImages": 10,
           "maxVideos": 5,
           "maxVideoTotalSec": 15,
           "maxAudio": 1,
           "maxAudioSec": 15,
           "maxImageMB": 20,
+          "minImageSide": 240,
+          "maxImageSide": 8000,
+          "maxImageAspect": 8,
+          "minClipSec": 1,
           "maxVideoMB": 100,
           "maxAudioMB": 15,
           "videoCountsTowardDuration": true,
@@ -75,7 +88,7 @@
           "1080P": 0.2
         }
       },
-      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint."
+      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint, and frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters."
     },
     {
       "id": "wan3.0-video-prime",
@@ -88,6 +101,9 @@
           "min": 2,
           "max": 30
         },
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 20000,
         "smartDuration": true,
         "resolutions": [
           "480P",
@@ -96,6 +112,7 @@
         ],
         "ratios": [
           "adaptive",
+          "21:9",
           "16:9",
           "4:3",
           "1:1",
@@ -109,12 +126,17 @@
         ],
         "framesRequireQwencloud": true,
         "refs": {
+          "minImages": 0,
           "maxImages": 10,
           "maxVideos": 5,
           "maxVideoTotalSec": 15,
           "maxAudio": 1,
           "maxAudioSec": 15,
           "maxImageMB": 20,
+          "minImageSide": 240,
+          "maxImageSide": 8000,
+          "maxImageAspect": 8,
+          "minClipSec": 1,
           "maxVideoMB": 100,
           "maxAudioMB": 15,
           "videoCountsTowardDuration": true,
@@ -131,7 +153,193 @@
           "1080P": 0.28
         }
       },
-      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint."
+      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint, and frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters."
+    },
+    {
+      "id": "happyhorse-1.1-t2v",
+      "label": "HappyHorse 1.1 (Token Plan)",
+      "kind": "video",
+      "provider": "tokenplan",
+      "enabled": true,
+      "policy": {
+        "durations": {
+          "min": 3,
+          "max": 15
+        },
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
+        "smartDuration": false,
+        "resolutions": [
+          "480P",
+          "720P",
+          "1080P"
+        ],
+        "audio": false,
+        "framesRequireQwencloud": false,
+        "watermark": true,
+        "seed": true,
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "4:5",
+          "5:4",
+          "9:21",
+          "21:9"
+        ],
+        "frames": [],
+        "refs": {
+          "minImages": 0,
+          "maxImages": 0,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "minImageSide": 0,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480P": 0.07,
+          "720P": 0.14,
+          "1080P": 0.18
+        }
+      },
+      "notes": "Text-to-video only — HappyHorse takes no reference video or audio, so nothing is deducted from the output duration. Upstream adds a Happy Horse watermark unless it is turned off. Runs on the Token Plan subscription and bills Credits, not dollars — the USD figures here are Singapore pay-as-you-go equivalents."
+    },
+    {
+      "id": "happyhorse-1.1-i2v",
+      "label": "HappyHorse 1.1 i2v (Token Plan)",
+      "kind": "video",
+      "provider": "tokenplan",
+      "enabled": true,
+      "policy": {
+        "durations": {
+          "min": 3,
+          "max": 15
+        },
+        "longestDurationOnly": [],
+        "firstFrameRequired": true,
+        "maxPromptChars": 0,
+        "smartDuration": false,
+        "resolutions": [
+          "480P",
+          "720P",
+          "1080P"
+        ],
+        "audio": false,
+        "framesRequireQwencloud": false,
+        "watermark": true,
+        "seed": true,
+        "ratios": [
+          "adaptive"
+        ],
+        "frames": [
+          "first_frame"
+        ],
+        "refs": {
+          "minImages": 0,
+          "maxImages": 0,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "minImageSide": 300,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480P": 0.07,
+          "720P": 0.14,
+          "1080P": 0.18
+        }
+      },
+      "notes": "Exactly one first-frame image (JPEG/PNG/WEBP, sides at least 300px — smaller frames are upscaled automatically at submit — ratio between 1:2.5 and 2.5:1, up to 20MB); the output follows the frame's aspect ratio, so there is no ratio choice. Upstream adds a Happy Horse watermark unless it is turned off. Runs on the Token Plan subscription and bills Credits, not dollars — the USD figures here are Singapore pay-as-you-go equivalents."
+    },
+    {
+      "id": "happyhorse-1.1-r2v",
+      "label": "HappyHorse 1.1 r2v (Token Plan)",
+      "kind": "video",
+      "provider": "tokenplan",
+      "enabled": true,
+      "policy": {
+        "durations": {
+          "min": 3,
+          "max": 15
+        },
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
+        "smartDuration": false,
+        "resolutions": [
+          "480P",
+          "720P",
+          "1080P"
+        ],
+        "audio": false,
+        "framesRequireQwencloud": false,
+        "watermark": true,
+        "seed": true,
+        "ratios": [
+          "16:9",
+          "9:16",
+          "1:1",
+          "4:3",
+          "3:4",
+          "4:5",
+          "5:4",
+          "9:21",
+          "21:9"
+        ],
+        "frames": [],
+        "refs": {
+          "minImages": 1,
+          "maxImages": 9,
+          "maxVideos": 0,
+          "maxVideoTotalSec": 0,
+          "maxAudio": 0,
+          "maxAudioSec": 0,
+          "maxImageMB": 20,
+          "minImageSide": 400,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
+          "maxVideoMB": 0,
+          "maxAudioMB": 0,
+          "videoCountsTowardDuration": false,
+          "totalBudgetSec": 0,
+          "framesExclusiveWithRefs": false
+        }
+      },
+      "pricing": {
+        "perSecond": {
+          "480P": 0.07,
+          "720P": 0.14,
+          "1080P": 0.18
+        }
+      },
+      "notes": "Reference-to-video with 1–9 images (shortest side at least 400px, ratio between 1:2.5 and 2.5:1, up to 20MB each — smaller images are upscaled automatically at submit), bound in the prompt as [Image 1], [Image 2]… exactly like the character chips do. Reference images never shorten the output — HappyHorse has no reference-video budget. Upstream adds a Happy Horse watermark unless it is turned off. Runs on the Token Plan subscription and bills Credits, not dollars — the USD figures here are Singapore pay-as-you-go equivalents."
     },
     {
       "id": "alibaba/happyhorse-1.1",
@@ -162,16 +370,24 @@
           "first_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 9,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 400,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -185,7 +401,7 @@
           "1080p": 0.1278
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Images at least 400px on the shortest side, between 1:2.5 and 2.5:1. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "bytedance/seedance-2.5",
@@ -216,16 +432,24 @@
           "last_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 9,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
-          "maxImageMB": 20,
+          "maxImageMB": 30,
+          "minImageSide": 300,
+          "maxImageSide": 6000,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -239,7 +463,7 @@
           "720p": 0.23
         }
       },
-      "notes": "Priced per video token upstream; the per-second rates here are estimates. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Priced per video token upstream; the per-second rates here are estimates. Images must be 300–6000px per side, between 0.4 and 2.5 in aspect ratio, under 30MB. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "bytedance/seedance-2.0",
@@ -273,16 +497,24 @@
           "last_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 9,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
-          "maxImageMB": 20,
+          "maxImageMB": 30,
+          "minImageSide": 300,
+          "maxImageSide": 6000,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -298,7 +530,7 @@
           "4K": 0.8
         }
       },
-      "notes": "Priced per video token upstream; the per-second rates here are estimates. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Priced per video token upstream; the per-second rates here are estimates. Images must be 300–6000px per side, between 0.4 and 2.5 in aspect ratio, under 30MB. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "bytedance/seedance-2.0-fast",
@@ -330,16 +562,24 @@
           "last_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 9,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
-          "maxImageMB": 20,
+          "maxImageMB": 30,
+          "minImageSide": 300,
+          "maxImageSide": 6000,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -353,7 +593,7 @@
           "720p": 0.091
         }
       },
-      "notes": "Priced per video token upstream; the per-second rates here are estimates. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Priced per video token upstream; the per-second rates here are estimates. Images must be 300–6000px per side, between 0.4 and 2.5 in aspect ratio, under 30MB. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "kwaivgi/kling-v3.0-pro",
@@ -380,16 +620,24 @@
           "last_frame"
         ],
         "seed": false,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 2500,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 7,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
-          "maxImageMB": 20,
+          "maxImageMB": 10,
+          "minImageSide": 300,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -405,7 +653,7 @@
           "default": 0.112
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Images at least 300px per side, between 1:2.5 and 2.5:1, up to 10MB. Prompts up to 2,500 characters. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "kwaivgi/kling-v3.0-std",
@@ -432,16 +680,24 @@
           "last_frame"
         ],
         "seed": false,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 2500,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 7,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
-          "maxImageMB": 20,
+          "maxImageMB": 10,
+          "minImageSide": 300,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -457,7 +713,7 @@
           "default": 0.084
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Images at least 300px per side, between 1:2.5 and 2.5:1, up to 10MB. Prompts up to 2,500 characters. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "google/veo-3.1",
@@ -488,16 +744,29 @@
           "last_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [
+          "1080p",
+          "4K",
+          "refs",
+          "last_frame"
+        ],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 3,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 0,
+          "maxImageSide": 0,
+          "maxImageAspect": 0,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -515,7 +784,7 @@
           "4K": 0.4
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "1080p and 4K render 8s clips only, and reference images or a last frame also need 8s — the duration choice narrows to 8s automatically. Prompts are capped at 1,024 tokens upstream. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "google/veo-3.1-fast",
@@ -546,16 +815,29 @@
           "last_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [
+          "1080p",
+          "4K",
+          "refs",
+          "last_frame"
+        ],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 3,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 0,
+          "maxImageSide": 0,
+          "maxImageAspect": 0,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -575,7 +857,7 @@
           "4K": 0.25
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "1080p and 4K render 8s clips only, and reference images or a last frame also need 8s — the duration choice narrows to 8s automatically. Prompts are capped at 1,024 tokens upstream. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "google/veo-3.1-lite",
@@ -601,20 +883,29 @@
         ],
         "audio": true,
         "frames": [
-          "first_frame",
-          "last_frame"
+          "first_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [
+          "1080p"
+        ],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
-          "maxImages": 3,
+          "minImages": 0,
+          "maxImages": 0,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 0,
+          "maxImageSide": 0,
+          "maxImageAspect": 0,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -632,7 +923,7 @@
           "720p": 0.03
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Lite takes a first frame only — no last frame and no reference images (Google lists both as Veo 3.1 and Fast only). 1080p renders 8s clips only. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "minimax/hailuo-3",
@@ -662,16 +953,24 @@
           "last_frame"
         ],
         "seed": false,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 2000,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 4,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 300,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -684,7 +983,7 @@
           "default": 0.13
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Images at least 300px on the short side, between 2:5 and 5:2, under 20MB. Prompts up to 2,000 characters. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "minimax/hailuo-3-max",
@@ -715,16 +1014,24 @@
           "last_frame"
         ],
         "seed": false,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 2000,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 4,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 300,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.5,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -738,7 +1045,7 @@
           "768p": 0.08
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "Images at least 300px on the short side, between 2:5 and 5:2, under 20MB. Prompts up to 2,000 characters. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "runway/gen-4.5",
@@ -763,16 +1070,24 @@
           "first_frame"
         ],
         "seed": true,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 1000,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 0,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 0,
+          "maxImageSide": 0,
+          "maxImageAspect": 2.35,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -785,7 +1100,7 @@
           "default": 0.12
         }
       },
-      "notes": "OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
+      "notes": "The first frame's aspect ratio must be within 2.35:1. Prompts up to 1,000 characters. OpenRouter's video API takes images only, so reference video and audio are not sent even where the vendor supports them."
     },
     {
       "id": "x-ai/grok-imagine-video-1.5",
@@ -817,16 +1132,24 @@
           "first_frame"
         ],
         "seed": false,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 0,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 0,
+          "maxImageSide": 0,
+          "maxImageAspect": 0,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -870,16 +1193,24 @@
         "audio": true,
         "frames": [],
         "seed": false,
+        "longestDurationOnly": [],
+        "firstFrameRequired": false,
+        "maxPromptChars": 0,
         "smartDuration": false,
         "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
+          "minImages": 0,
           "maxImages": 0,
           "maxVideos": 0,
           "maxVideoTotalSec": 0,
           "maxAudio": 0,
           "maxAudioSec": 0,
           "maxImageMB": 20,
+          "minImageSide": 0,
+          "maxImageSide": 0,
+          "maxImageAspect": 0,
+          "minClipSec": 0,
           "maxVideoMB": 0,
           "maxAudioMB": 0,
           "videoCountsTowardDuration": false,
@@ -905,7 +1236,14 @@
       "policy": {
         "maxRefs": 3,
         "maxRefMB": 10,
+        "minRefSide": 384,
+        "maxRefSide": 0,
+        "maxRefAspect": 8,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 500,
         "sizes": [
           "auto",
           "1333*750",
@@ -939,7 +1277,14 @@
       "policy": {
         "maxRefs": 3,
         "maxRefMB": 10,
+        "minRefSide": 384,
+        "maxRefSide": 0,
+        "maxRefAspect": 8,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 500,
         "sizes": [
           "auto",
           "1333*750",
@@ -965,6 +1310,80 @@
       }
     },
     {
+      "id": "wan2.7-image-pro",
+      "label": "Wan 2.7 Image Pro (Token Plan)",
+      "kind": "image",
+      "provider": "tokenplan",
+      "enabled": true,
+      "policy": {
+        "maxRefs": 9,
+        "maxRefMB": 20,
+        "minRefSide": 240,
+        "maxRefSide": 8000,
+        "maxRefAspect": 0,
+        "refNoAlpha": true,
+        "maxN": 4,
+        "textOnlySizes": [
+          "4K"
+        ],
+        "maxPromptChars": 5000,
+        "maxNegativeChars": 0,
+        "sizes": [
+          "auto",
+          "1K",
+          "2K",
+          "4K"
+        ],
+        "negativePrompt": false,
+        "promptExtend": false,
+        "watermark": true,
+        "seed": true
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.075
+        }
+      },
+      "notes": "Text-to-image plus image editing and multi-image reference (up to 9 images, each up to 20MB, sides 240–8000px, no alpha channel — out-of-range images are rescaled and transparent ones flattened onto white at submit). 4K output is text-to-image only — editing and reference runs cap at 2K, and when an image is supplied the output matches the last input image's aspect ratio. Runs on the Token Plan subscription and bills Credits, not dollars — the USD figures here are Singapore pay-as-you-go equivalents."
+    },
+    {
+      "id": "qwen-image-2.0-pro",
+      "label": "Qwen Image 2.0 Pro (Token Plan)",
+      "kind": "image",
+      "provider": "tokenplan",
+      "enabled": false,
+      "policy": {
+        "maxRefs": 3,
+        "maxRefMB": 10,
+        "minRefSide": 384,
+        "maxRefSide": 3072,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
+        "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 500,
+        "sizes": [
+          "auto",
+          "2048*2048",
+          "2688*1536",
+          "1536*2688",
+          "2368*1728",
+          "1728*2368"
+        ],
+        "negativePrompt": true,
+        "promptExtend": true,
+        "watermark": true,
+        "seed": true
+      },
+      "pricing": {
+        "perImage": {
+          "default": 0.075
+        }
+      },
+      "notes": "Team Edition only — the Personal Token Plan does not include qwen-image-2.0-pro (it has qwen-image-3.0-pro instead), so this stays off unless the key is a Team key. 1–3 reference images up to 10MB for editing (sides 384–3072px, rescaled at submit); negative prompt up to 500 characters; prompts up to 1,300 tokens; the upstream rate limit is 2 requests per minute. Runs on the Token Plan subscription and bills Credits, not dollars — the USD figures here are Singapore pay-as-you-go equivalents."
+    },
+    {
       "id": "google/gemini-3.1-flash-image",
       "label": "Nano Banana 2",
       "kind": "image",
@@ -973,7 +1392,14 @@
       "policy": {
         "maxRefs": 14,
         "maxRefMB": 10,
+        "minRefSide": 0,
+        "maxRefSide": 0,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 0,
         "sizes": [
           "auto",
           "1333*750",
@@ -1002,7 +1428,14 @@
       "policy": {
         "maxRefs": 14,
         "maxRefMB": 10,
+        "minRefSide": 0,
+        "maxRefSide": 0,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 0,
         "sizes": [
           "auto",
           "1333*750",
@@ -1031,7 +1464,14 @@
       "policy": {
         "maxRefs": 10,
         "maxRefMB": 10,
+        "minRefSide": 0,
+        "maxRefSide": 0,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 0,
         "sizes": [
           "auto",
           "1333*750",
@@ -1060,7 +1500,14 @@
       "policy": {
         "maxRefs": 10,
         "maxRefMB": 10,
+        "minRefSide": 0,
+        "maxRefSide": 0,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 0,
         "sizes": [
           "auto",
           "1333*750",
@@ -1089,7 +1536,14 @@
       "policy": {
         "maxRefs": 8,
         "maxRefMB": 10,
+        "minRefSide": 0,
+        "maxRefSide": 0,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 0,
         "sizes": [
           "auto",
           "1333*750",
@@ -1118,7 +1572,14 @@
       "policy": {
         "maxRefs": 1,
         "maxRefMB": 10,
+        "minRefSide": 0,
+        "maxRefSide": 0,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 0,
         "sizes": [
           "auto",
           "1333*750",
@@ -1147,7 +1608,14 @@
       "policy": {
         "maxRefs": 0,
         "maxRefMB": 10,
+        "minRefSide": 0,
+        "maxRefSide": 0,
+        "maxRefAspect": 0,
+        "refNoAlpha": false,
         "maxN": 6,
+        "textOnlySizes": [],
+        "maxPromptChars": 0,
+        "maxNegativeChars": 0,
         "sizes": [
           "auto",
           "1333*750",
@@ -1166,6 +1634,23 @@
           "default": 0.04
         }
       }
+    },
+    {
+      "id": "qwen3.8-max-tokenplan",
+      "label": "Qwen 3.8 Max (Token Plan)",
+      "kind": "text",
+      "provider": "tokenplan",
+      "enabled": true,
+      "policy": {
+        "vision": true,
+        "maxTokens": 8000
+      },
+      "pricing": {
+        "per1KInput": 0.002,
+        "per1KOutput": 0.002
+      },
+      "upstreamId": "qwen3.8-max",
+      "notes": "Runs on the Token Plan subscription and bills Credits, not dollars — the USD figures here are Singapore pay-as-you-go equivalents."
     },
     {
       "id": "qwen3.8-max",

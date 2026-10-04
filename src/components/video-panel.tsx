@@ -32,10 +32,11 @@ import type {
   RewriteJob,
   VideoSettings,
 } from "@/lib/types";
-import { charAudioUrl, charImgUrl } from "@/lib/types";
+import { activeLook, charAudioUrl, charImgUrl } from "@/lib/types";
 import {
   DEFAULT_MODELS,
   durationBounds,
+  longestDurationReasons,
   orderedResolution,
   snapDuration,
   type DurationPolicy,
@@ -54,6 +55,7 @@ export type MediaItem = {
   state: "uploading" | "ready" | "error";
   error?: string;
   characterId?: string;
+  characterLookId?: string;
 };
 
 export type VideoSubmitPayload = VideoSettings;
@@ -93,6 +95,47 @@ function refHint(r: VideoPolicy["refs"]): string {
 }
 
 let idCounter = 0;
+async function fitImage(
+  url: string,
+  minSide: number,
+  maxSide: number,
+  maxAspect: number
+): Promise<{ url: string; size?: [number, number]; to?: [number, number] }> {
+  if (!minSide && !maxSide && !maxAspect) return { url };
+  const img = new Image();
+  img.decoding = "async";
+  img.src = url;
+  try {
+    await img.decode();
+  } catch {
+    return { url };
+  }
+  const w = img.naturalWidth;
+  const h = img.naturalHeight;
+  if (!w || !h) return { url };
+  const scale =
+    minSide && Math.min(w, h) < minSide
+      ? minSide / Math.min(w, h)
+      : maxSide && Math.max(w, h) > maxSide
+        ? maxSide / Math.max(w, h)
+        : 1;
+  if (scale === 1) return { url, size: [w, h] };
+  const W = scale > 1 ? Math.ceil(w * scale) : Math.floor(w * scale);
+  const H = scale > 1 ? Math.ceil(h * scale) : Math.floor(h * scale);
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return { url, size: [w, h] };
+  ctx.imageSmoothingQuality = "high";
+  ctx.drawImage(img, 0, 0, W, H);
+  try {
+    return { url: canvas.toDataURL("image/png"), size: [w, h], to: [W, H] };
+  } catch {
+    return { url, size: [w, h] };
+  }
+}
+
 const nextId = () => `m${Date.now()}-${idCounter++}`;
 
 export default function VideoPanel({
@@ -155,6 +198,12 @@ export default function VideoPanel({
   const policy = entry?.policy ?? FALLBACK_POLICY;
   const refPolicy = policy.refs;
   const MAX_IMAGES = refPolicy.maxImages;
+  const MIN_IMAGES = refPolicy.minImages;
+  const MIN_CLIP_SEC = refPolicy.minClipSec;
+  const MIN_SIDE = refPolicy.minImageSide;
+  const MAX_SIDE = refPolicy.maxImageSide;
+  const MAX_ASPECT = refPolicy.maxImageAspect;
+  const LONGEST_RULES = policy.longestDurationOnly.join("|");
   const MAX_VIDEOS = refPolicy.maxVideos;
   const MAX_AUDIO = refPolicy.maxAudio;
   const MAX_VIDEO_TOTAL_SEC = refPolicy.maxVideoTotalSec;
@@ -164,8 +213,6 @@ export default function VideoPanel({
   const MAX_AUDIO_BYTES = refPolicy.maxAudioMB * MB;
   const budgetApplies = refPolicy.videoCountsTowardDuration && MAX_VIDEOS > 0;
   const TOTAL_BUDGET_SEC = refPolicy.totalBudgetSec;
-  const bounds = durationBounds(policy.durations);
-  const discrete = "values" in policy.durations ? policy.durations.values : null;
   const hasLastFrame = policy.frames.includes("last_frame");
 
   const showFrameMode =
@@ -175,6 +222,24 @@ export default function VideoPanel({
   const takesRefs = MAX_IMAGES + MAX_VIDEOS + MAX_AUDIO > 0;
   const smartCapable = policy.smartDuration && !frameMode;
   const smartOn = smartDuration && smartCapable;
+  const longestReasons = longestDurationReasons(LONGEST_RULES.split("|").filter(Boolean), {
+    resolution,
+    refImages: frameMode
+      ? 0
+      : items.filter((i) => i.kind === "image" && i.state !== "error").length,
+    lastFrame: frameMode && hasLastFrame && Boolean(lastFrame),
+  });
+  const effDurations: DurationPolicy = longestReasons.length
+    ? { values: [durationBounds(policy.durations).max] }
+    : policy.durations;
+  const bounds = durationBounds(effDurations);
+  const discrete = "values" in effDurations ? effDurations.values : null;
+
+  useEffect(() => {
+    if (!showFrameMode || takesRefs) return;
+    const raf = requestAnimationFrame(() => setGenMode("frame"));
+    return () => cancelAnimationFrame(raf);
+  }, [showFrameMode, takesRefs]);
 
   const images = items.filter((i) => i.kind === "image");
   const videos = items.filter((i) => i.kind === "video");
@@ -188,7 +253,7 @@ export default function VideoPanel({
     ? Math.min(bounds.max, Math.max(bounds.min, TOTAL_BUDGET_SEC - Math.ceil(totalVideoSec)))
     : bounds.max;
 
-  const durationsKey = JSON.stringify(policy.durations);
+  const durationsKey = JSON.stringify(effDurations);
   const resolutionsKey = policy.resolutions.join("|");
   const ratiosKey = policy.ratios.join("|");
   useEffect(() => {
@@ -212,10 +277,11 @@ export default function VideoPanel({
   }, [models, modelChoice]);
 
   const audioCount = items.filter((i) => i.kind === "audio" && i.state !== "error").length;
+  const modelLabel = entry?.label ?? "This model";
   const limitIssues = useMemo(() => {
     if (frameMode) return [];
     const out: string[] = [];
-    const label = entry?.label ?? "This model";
+    const label = modelLabel;
     const imgs = items.filter((i) => i.kind === "image" && i.state !== "error").length;
     const vids = items.filter((i) => i.kind === "video" && i.state !== "error").length;
     if (imgs > MAX_IMAGES)
@@ -236,8 +302,23 @@ export default function VideoPanel({
           ? `${label} takes ${MAX_AUDIO} audio clip${MAX_AUDIO === 1 ? "" : "s"} — remove ${audioCount - MAX_AUDIO}.`
           : `${label} does not take reference audio — remove it or switch model.`
       );
+    if (imgs < MIN_IMAGES)
+      out.push(
+        `${label} needs at least ${MIN_IMAGES} reference image${MIN_IMAGES === 1 ? "" : "s"} — add one, or @ a character.`
+      );
+    if (MIN_CLIP_SEC)
+      for (const i of items)
+        if (
+          (i.kind === "video" || i.kind === "audio") &&
+          i.state !== "error" &&
+          (i.durationSec ?? 0) > 0 &&
+          (i.durationSec ?? 0) < MIN_CLIP_SEC
+        )
+          out.push(
+            `${i.name} is ${(i.durationSec ?? 0).toFixed(1)}s — ${label} needs clips of at least ${MIN_CLIP_SEC}s.`
+          );
     return out;
-  }, [items, frameMode, entry, MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO, audioCount]);
+  }, [items, frameMode, modelLabel, MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO, audioCount, MIN_IMAGES, MIN_CLIP_SEC]);
 
   function notify(msg: string) {
     setNotices((n) => [...n.slice(-3), msg]);
@@ -441,6 +522,37 @@ export default function VideoPanel({
     return `${line} `;
   }
 
+  function tooLong(text: string): boolean {
+    const max = policy.maxPromptChars;
+    if (!max || text.length <= max) return false;
+    notify(
+      `${modelLabel} takes prompts up to ${max} characters — this one is ${text.length} with the character lines added. Shorten it or switch model.`
+    );
+    return true;
+  }
+
+  async function fitForModel(url: string, name: string): Promise<string | null> {
+    const fit = await fitImage(url, MIN_SIDE, MAX_SIDE, MAX_ASPECT);
+    const label = modelLabel;
+    const max = MAX_ASPECT;
+    if (fit.size && max) {
+      const [w, h] = fit.size;
+      if (Math.max(w, h) / Math.min(w, h) > max) {
+        notify(
+          `${name} is ${w}×${h} — ${label} only takes images between 1:${max} and ${max}:1. Crop it and add it again.`
+        );
+        return null;
+      }
+    }
+    if (fit.to && fit.size)
+      notify(
+        fit.to[0] > fit.size[0]
+          ? `${name} was ${fit.size[0]}×${fit.size[1]} — upscaled to ${fit.to[0]}×${fit.to[1]} because ${label} needs at least ${MIN_SIDE}px per side`
+          : `${name} was ${fit.size[0]}×${fit.size[1]} — downscaled to ${fit.to[0]}×${fit.to[1]} because ${label} takes at most ${MAX_SIDE}px per side`
+      );
+    return fit.url;
+  }
+
   function patchWorking(
     list: MediaItem[],
     id: string,
@@ -483,6 +595,7 @@ export default function VideoPanel({
         previewUrl: "",
         state: "uploading",
         characterId: c.id,
+        characterLookId: activeLook(c).id,
       });
     }
     let audioItem: MediaItem | null = null;
@@ -643,6 +756,38 @@ export default function VideoPanel({
     return working;
   }
 
+  async function refreshLooks(list: MediaItem[]): Promise<MediaItem[]> {
+    if (!list.some((i) => i.characterLookId)) return list;
+    let chars: Character[] = [];
+    try {
+      const res = await fetch(
+        `/api/characters?project=${projectId === null ? "none" : projectId}`
+      );
+      const d = await res.json();
+      chars = Array.isArray(d.characters) ? d.characters : [];
+    } catch {
+      return list;
+    }
+    const stale = chars.filter((c) =>
+      list.some(
+        (i) =>
+          i.characterId === c.id &&
+          i.characterLookId &&
+          i.characterLookId !== activeLook(c).id
+      )
+    );
+    if (!stale.length) return list;
+    let next = list.filter(
+      (i) => !stale.some((c) => c.id === i.characterId)
+    );
+    setItems(next);
+    for (const c of stale) {
+      next = await injectCharacter(c, next);
+      notify(`${c.name} switched to the "${activeLook(c).name}" look`);
+    }
+    return next;
+  }
+
   async function findDeferredCharacters(text: string): Promise<Character[]> {
     let chars: Character[] = [];
     try {
@@ -656,6 +801,7 @@ export default function VideoPanel({
     }
     return chars.filter(
       (c) =>
+        !c.hidden &&
         new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text) &&
         !itemsRef.current.some((i) => i.characterId === c.id)
     );
@@ -1028,7 +1174,7 @@ export default function VideoPanel({
     }
     setRewriting(true);
     try {
-      let list = itemsRef.current;
+      let list = await refreshLooks(itemsRef.current);
       for (const c of await findDeferredCharacters(text))
         list = await injectCharacter(c, list);
       const inventory = await buildInventory(list);
@@ -1085,10 +1231,14 @@ export default function VideoPanel({
       }
       setPreparing(true);
       try {
+        if (tooLong(sourceText)) return;
+        const ffUrl = await fitForModel(ff.url!, "The first frame");
+        const lfUrl = lf ? await fitForModel(lf.url!, "The last frame") : null;
+        if (!ffUrl || (lf && !lfUrl)) return;
         const media: MediaPayload[] = [
           {
             type: "first_frame",
-            url: ff.url!,
+            url: ffUrl,
             name: ff.name,
             previewUrl: ff.previewUrl,
           },
@@ -1096,7 +1246,7 @@ export default function VideoPanel({
         if (lf)
           media.push({
             type: "last_frame",
-            url: lf.url!,
+            url: lfUrl!,
             name: lf.name,
             previewUrl: lf.previewUrl,
           });
@@ -1154,7 +1304,7 @@ export default function VideoPanel({
     }
     setPreparing(true);
     try {
-      const working = [...itemsRef.current];
+      const working = [...(await refreshLooks(itemsRef.current))];
       if (
         useRewritten &&
         rewriteSig &&
@@ -1233,6 +1383,7 @@ export default function VideoPanel({
             previewUrl: refs.images[i],
             state: "ready",
             characterId: c.id,
+            characterLookId: activeLook(c).id,
           });
         if (refs.audio && audUsed < MAX_AUDIO)
           working.push({
@@ -1261,7 +1412,15 @@ export default function VideoPanel({
         }
         finalPrompt = lines.length ? lines.join("") + sourceText : sourceText;
       }
+      if (tooLong(finalPrompt)) return;
       const ready = working.filter((i) => i.state === "ready" && i.url);
+      const fitted = new Map<string, string>();
+      for (const i of ready)
+        if (i.kind === "image") {
+          const url = await fitForModel(i.url!, i.name);
+          if (!url) return;
+          fitted.set(i.id, url);
+        }
       const media: MediaPayload[] = ready.map((i) => ({
         type:
           i.kind === "image"
@@ -1269,7 +1428,7 @@ export default function VideoPanel({
             : i.kind === "video"
               ? "reference_video"
               : "reference_audio",
-        url: i.url!,
+        url: fitted.get(i.id) ?? i.url!,
         name: i.name,
         previewUrl: i.kind === "audio" ? "" : i.previewUrl,
         durationSec: i.durationSec,
@@ -1711,9 +1870,11 @@ export default function VideoPanel({
             hint={
               smartOn
                 ? `model picks, up to ${durationMax}s`
-                : discrete
-                  ? `${discrete.join(", ")}s`
-                  : `${bounds.min}–${durationMax}s`
+                : longestReasons.length
+                  ? `${discrete?.[0]}s only with ${longestReasons.join(" and ")}`
+                  : discrete
+                    ? `${discrete.join(", ")}s`
+                    : `${bounds.min}–${durationMax}s`
             }
           >
             <div className="flex flex-col gap-2">

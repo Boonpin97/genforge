@@ -1,16 +1,60 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
-import type { Character } from "./types";
+import type { Character, CharacterLook } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "characters");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
+const LOOK_ID = /^[a-z0-9]{1,16}$/i;
+export const MAX_LOOKS = 12;
+
+function syncFromLooks(c: Character): Character {
+  const looks = c.looks?.length ? c.looks : [];
+  const active = looks.find((l) => l.id === c.activeLookId) ?? looks[0];
+  if (!active) return c;
+  return {
+    ...c,
+    activeLookId: active.id,
+    description: active.description,
+    imageCount: active.imageCount,
+  };
+}
+
+function normalize(c: Character): Character {
+  if (!Array.isArray(c.looks) || !c.looks.length)
+    return syncFromLooks({
+      ...c,
+      looks: [
+        {
+          id: "main",
+          name: "Default",
+          description: c.description || "",
+          imageCount: c.imageCount || 0,
+        },
+      ],
+    });
+  const found = c.looks.find((l) => l.id === c.activeLookId) ?? c.looks[0];
+  const active: CharacterLook = {
+    ...found,
+    description: c.description ?? found.description,
+    imageCount: c.imageCount ?? found.imageCount,
+  };
+  return syncFromLooks({
+    ...c,
+    looks: c.looks.map((l) => (l.id === active.id ? active : l)),
+    activeLookId: active.id,
+  });
+}
+
+function imagePrefix(lookId: string): string {
+  return lookId === "main" ? "img-" : `look-${lookId}-img-`;
+}
 
 async function readIndex(): Promise<Character[]> {
   try {
     const raw = await fs.readFile(INDEX_FILE, "utf8");
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Character[]) : [];
+    return Array.isArray(parsed) ? (parsed as Character[]).map(normalize) : [];
   } catch {
     return [];
   }
@@ -43,6 +87,19 @@ export async function setCharacterProject(
   const rec = list.find((c) => c.id === id);
   if (!rec) return false;
   rec.projectId = projectId;
+  await writeIndex(list);
+  return true;
+}
+
+export async function setCharacterHidden(
+  id: string,
+  hidden: boolean
+): Promise<boolean> {
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
+  const list = await readIndex();
+  const rec = list.find((c) => c.id === id);
+  if (!rec) return false;
+  rec.hidden = hidden || undefined;
   await writeIndex(list);
   return true;
 }
@@ -116,6 +173,7 @@ function extFor(contentType: string, fallback: string): string {
 export async function createCharacter(input: {
   name: string;
   description: string;
+  lookName?: string;
   images: StoredFile[];
   audio?: StoredFile;
   projectId?: string | null;
@@ -138,7 +196,7 @@ export async function createCharacter(input: {
     );
   }
 
-  const character: Character = {
+  const character: Character = syncFromLooks({
     id,
     name: input.name,
     description: input.description,
@@ -146,7 +204,16 @@ export async function createCharacter(input: {
     hasAudio: Boolean(input.audio),
     createdAt: Date.now(),
     projectId: input.projectId ?? null,
-  };
+    looks: [
+      {
+        id: "main",
+        name: input.lookName?.trim() || "Default",
+        description: input.description,
+        imageCount: input.images.length,
+      },
+    ],
+    activeLookId: "main",
+  });
   const list = await readIndex();
   list.push(character);
   await writeIndex(list);
@@ -168,6 +235,8 @@ export async function updateCharacter(
   input: {
     name?: string;
     description?: string;
+    lookId?: string;
+    lookName?: string;
     keepImageIndices?: number[];
     newImages?: StoredFile[];
     audio?: StoredFile;
@@ -180,8 +249,25 @@ export async function updateCharacter(
   if (pos === -1) return "invalid";
   const current = list[pos];
   const dir = path.join(DATA_DIR, id);
+  const looks = [...(current.looks ?? [])];
 
-  const existing = await findFiles(id, "img-");
+  let look: CharacterLook | undefined;
+  if (input.lookId === "new") {
+    if (looks.length >= MAX_LOOKS) return "invalid";
+    look = {
+      id: randomUUID().replace(/-/g, "").slice(0, 10),
+      name: "",
+      description: "",
+      imageCount: 0,
+    };
+    looks.push(look);
+  } else {
+    look = looks.find((l) => l.id === (input.lookId ?? current.activeLookId));
+  }
+  if (!look) return "invalid";
+  const prefix = imagePrefix(look.id);
+
+  const existing = await findFiles(id, prefix);
   const keep =
     input.keepImageIndices ?? existing.map((_, i) => i);
   const kept: { bytes: Buffer; contentType: string }[] = [];
@@ -199,10 +285,21 @@ export async function updateCharacter(
   for (let i = 0; i < finalImages.length; i++) {
     const img = finalImages[i];
     await fs.writeFile(
-      path.join(dir, `img-${i}${extFor(img.contentType, ".png")}`),
+      path.join(dir, `${prefix}${i}${extFor(img.contentType, ".png")}`),
       img.bytes
     );
   }
+
+  const now = Date.now();
+  const lookPos = looks.findIndex((l) => l.id === look.id);
+  looks[lookPos] = {
+    ...look,
+    name:
+      input.lookName?.trim() || look.name || `Look ${lookPos + 1}`,
+    description: input.description?.trim() ?? look.description,
+    imageCount: finalImages.length,
+    updatedAt: now,
+  };
 
   let hasAudio = current.hasAudio;
   if (input.removeAudio) {
@@ -218,17 +315,56 @@ export async function updateCharacter(
     hasAudio = true;
   }
 
-  const updated: Character = {
+  const updated: Character = syncFromLooks({
     ...current,
     name: input.name?.trim() || current.name,
-    description: input.description?.trim() ?? current.description,
-    imageCount: finalImages.length,
+    looks,
     hasAudio,
-    updatedAt: Date.now(),
-  };
+    updatedAt: now,
+  });
   list[pos] = updated;
   await writeIndex(list);
   return updated;
+}
+
+export async function setActiveLook(
+  id: string,
+  lookId: string
+): Promise<Character | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id) || !LOOK_ID.test(lookId)) return null;
+  const list = await readIndex();
+  const pos = list.findIndex((c) => c.id === id);
+  if (pos === -1) return null;
+  if (!list[pos].looks?.some((l) => l.id === lookId)) return null;
+  list[pos] = syncFromLooks({
+    ...list[pos],
+    activeLookId: lookId,
+    updatedAt: Date.now(),
+  });
+  await writeIndex(list);
+  return list[pos];
+}
+
+export async function deleteLook(
+  id: string,
+  lookId: string
+): Promise<Character | "last" | null> {
+  if (!/^[0-9a-f-]{36}$/i.test(id) || !LOOK_ID.test(lookId)) return null;
+  const list = await readIndex();
+  const pos = list.findIndex((c) => c.id === id);
+  if (pos === -1) return null;
+  const looks = list[pos].looks ?? [];
+  if (!looks.some((l) => l.id === lookId)) return null;
+  if (looks.length <= 1) return "last";
+  for (const f of await findFiles(id, imagePrefix(lookId)))
+    await fs.rm(f, { force: true });
+  list[pos] = syncFromLooks({
+    ...list[pos],
+    looks: looks.filter((l) => l.id !== lookId),
+    updatedAt: Date.now(),
+  });
+  await writeIndex(list);
+  return list[pos];
 }
 
 async function findFiles(id: string, prefix: string): Promise<string[]> {
@@ -247,9 +383,17 @@ async function findFiles(id: string, prefix: string): Promise<string[]> {
 
 export async function getCharacterImage(
   id: string,
-  index: number
+  index: number,
+  lookId?: string | null
 ): Promise<{ bytes: Buffer; contentType: string } | null> {
-  const files = await findFiles(id, "img-");
+  let look = lookId;
+  if (!look) {
+    const rec = (await readIndex()).find((c) => c.id === id);
+    if (!rec) return null;
+    look = rec.activeLookId ?? "main";
+  }
+  if (!LOOK_ID.test(look)) return null;
+  const files = await findFiles(id, imagePrefix(look));
   const file = files[index];
   if (!file) return null;
   const bytes = await fs.readFile(file);

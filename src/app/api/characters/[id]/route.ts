@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   copyCharacter,
   deleteCharacter,
+  deleteLook,
+  setActiveLook,
+  setCharacterHidden,
   setCharacterProject,
   updateCharacter,
   type StoredFile,
@@ -63,13 +66,55 @@ export async function PATCH(
         );
       return NextResponse.json({ ok: true, moved: true });
     }
+    const hiddenRaw = form.get("hidden");
+    if (hiddenRaw !== null) {
+      const ok = await setCharacterHidden(id, hiddenRaw === "true");
+      if (!ok)
+        return NextResponse.json(
+          { code: "NotFound", message: "Character not found." },
+          { status: 404 }
+        );
+      return NextResponse.json({ ok: true, hidden: hiddenRaw === "true" });
+    }
+    const activeRaw = form.get("activeLook");
+    if (typeof activeRaw === "string") {
+      const character = await setActiveLook(id, activeRaw);
+      if (!character)
+        return NextResponse.json(
+          { code: "NotFound", message: "Character or look not found." },
+          { status: 404 }
+        );
+      return NextResponse.json({ character });
+    }
+    const deleteRaw = form.get("deleteLook");
+    if (typeof deleteRaw === "string") {
+      const result = await deleteLook(id, deleteRaw);
+      if (result === "last")
+        return NextResponse.json(
+          {
+            code: "BadRequest",
+            message: "A character needs at least one look.",
+          },
+          { status: 400 }
+        );
+      if (!result)
+        return NextResponse.json(
+          { code: "NotFound", message: "Character or look not found." },
+          { status: 404 }
+        );
+      return NextResponse.json({ character: result });
+    }
     const name = String(form.get("name") || "").trim();
     const description = String(form.get("description") || "").trim();
-    if (name.length > 60 || description.length > 600) {
+    const lookName = String(form.get("lookName") || "").trim();
+    const lookRaw = form.get("lookId");
+    const lookId = typeof lookRaw === "string" && lookRaw ? lookRaw : undefined;
+    if (name.length > 60 || description.length > 600 || lookName.length > 40) {
       return NextResponse.json(
         {
           code: "BadRequest",
-          message: "Name must be ≤60 chars, description ≤600 chars.",
+          message:
+            "Name must be ≤60 chars, look name ≤40 chars, description ≤600 chars.",
         },
         { status: 400 }
       );
@@ -152,6 +197,8 @@ export async function PATCH(
     const result = await updateCharacter(id, {
       name: name || undefined,
       description,
+      lookId,
+      lookName: lookName || undefined,
       keepImageIndices,
       newImages,
       audio,
@@ -161,7 +208,8 @@ export async function PATCH(
       return NextResponse.json(
         {
           code: "BadRequest",
-          message: "Character not found, or images must be 1–6.",
+          message:
+            "Character or look not found, images must be 1–6, or the character already has 12 looks.",
         },
         { status: 400 }
       );
