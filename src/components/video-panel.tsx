@@ -159,6 +159,9 @@ export default function VideoPanel({
   const [rewriting, setRewriting] = useState(false);
   const [rewriteJobId, setRewriteJobId] = useState<string | null>(null);
   const [rewriteThinking, setRewriteThinking] = useState(false);
+  const [autoRewrite, setAutoRewrite] = useState(false);
+  const [autoSendJob, setAutoSendJob] = useState<string | null>(null);
+  const [autoSendReady, setAutoSendReady] = useState(false);
   const thinkLoadedRef = useRef(false);
   const [rewriteSig, setRewriteSig] = useState("");
   const [modelChoice, setModel] = useState("wan3.0-video");
@@ -182,6 +185,8 @@ export default function VideoPanel({
       try {
         if (localStorage.getItem("genforge.rewriteThinking") === "1")
           setRewriteThinking(true);
+        if (localStorage.getItem("genforge.autoRewrite") === "1")
+          setAutoRewrite(true);
       } catch {}
     });
     return () => cancelAnimationFrame(raf);
@@ -192,6 +197,12 @@ export default function VideoPanel({
       localStorage.setItem("genforge.rewriteThinking", rewriteThinking ? "1" : "0");
     } catch {}
   }, [rewriteThinking]);
+  useEffect(() => {
+    if (!thinkLoadedRef.current) return;
+    try {
+      localStorage.setItem("genforge.autoRewrite", autoRewrite ? "1" : "0");
+    } catch {}
+  }, [autoRewrite]);
 
   const entry = models.find((m) => m.id === modelChoice) ?? models[0] ?? null;
   const model = entry?.id ?? modelChoice;
@@ -337,14 +348,19 @@ export default function VideoPanel({
   };
 
   const settleRewriteJob = (job: RewriteJob, restored: boolean) => {
+    const autoSend = !restored && autoSendJob === job.id;
+    if (autoSendJob === job.id) setAutoSendJob(null);
     if (job.status === "succeeded") {
       setRewrote((cur) => (restored && cur.trim() ? cur : job.rewrote || ""));
       setPromptTab("rewritten");
       setRewriteSig(job.sig || "");
+      if (autoSend) setAutoSendReady(true);
       notify(
-        restored
-          ? "Picked up the rewrite that finished while you were away — review it, then generate"
-          : "Rewritten request ready — review it, then generate"
+        autoSend
+          ? "Rewritten request ready — generating with it now"
+          : restored
+            ? "Picked up the rewrite that finished while you were away — review it, then generate"
+            : "Rewritten request ready — review it, then generate"
       );
       alertDone({
         channel: "rewrite",
@@ -401,6 +417,10 @@ export default function VideoPanel({
 
   useEffect(() => {
     let cancelled = false;
+    const raf = requestAnimationFrame(() => {
+      setAutoSendJob(null);
+      setAutoSendReady(false);
+    });
     (async () => {
       try {
         const res = await fetch(
@@ -422,6 +442,7 @@ export default function VideoPanel({
     })();
     return () => {
       cancelled = true;
+      cancelAnimationFrame(raf);
     };
   }, [projectId]);
 
@@ -1161,11 +1182,15 @@ export default function VideoPanel({
     return lines;
   }
 
-  async function handleRewrite() {
+  async function handleRewrite(thenGenerate = false) {
     setNotices([]);
     const text = prompt.trim();
     if (!text) {
       notify("Write a prompt first");
+      return;
+    }
+    if (rewriting) {
+      notify("A rewrite is already running — wait for it to finish");
       return;
     }
     if (pending) {
@@ -1193,8 +1218,11 @@ export default function VideoPanel({
       if (!res.ok || !data?.job?.id)
         throw new Error(data?.message || `Rewrite failed (HTTP ${res.status})`);
       setRewriteJobId(String(data.job.id));
+      if (thenGenerate) setAutoSendJob(String(data.job.id));
       notify(
-        "Rewriting — this keeps running on the server, so a reload or project switch will not lose it"
+        thenGenerate
+          ? "Rewriting — the video is generated as soon as the rewrite is ready"
+          : "Rewriting — this keeps running on the server, so a reload or project switch will not lose it"
       );
     } catch (e) {
       setRewriting(false);
@@ -1203,6 +1231,10 @@ export default function VideoPanel({
   }
 
   async function handleSubmit(confirmed = false) {
+    if (autoRewrite && promptTab === "prompt") {
+      await handleRewrite(true);
+      return;
+    }
     setNotices([]);
     const useRewritten = promptTab === "rewritten";
     const sourceText = (useRewritten ? rewrote : prompt).trim();
@@ -1453,6 +1485,19 @@ export default function VideoPanel({
     }
   }
 
+  const submitRef = useRef(handleSubmit);
+  useEffect(() => {
+    submitRef.current = handleSubmit;
+  });
+  useEffect(() => {
+    if (!autoSendReady || promptTab !== "rewritten") return;
+    const raf = requestAnimationFrame(() => {
+      setAutoSendReady(false);
+      void submitRef.current();
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [autoSendReady, promptTab, rewrote]);
+
   const imgIdx = (item: MediaItem) =>
     images.filter((i) => i.state === "ready").indexOf(item) + 1;
   const vidIdx = (item: MediaItem) =>
@@ -1511,9 +1556,19 @@ export default function VideoPanel({
               label="Think"
             />
           </span>
+          <span
+            title="Auto rewrite: Generate on the Prompt tab rewrites the prompt first and generates with the rewritten text as soon as it is ready. On the Rewritten tab, Generate sends that text as it is."
+            className="shrink-0"
+          >
+            <Toggle
+              checked={autoRewrite}
+              onChange={setAutoRewrite}
+              label="Auto"
+            />
+          </span>
           <Btn
             variant="ghost"
-            onClick={handleRewrite}
+            onClick={() => void handleRewrite()}
             disabled={rewriting || preparing}
           >
             {rewriting ? "Rewriting…" : "✦ Rewrite"}
@@ -2002,7 +2057,12 @@ export default function VideoPanel({
 
       <Btn
         onClick={() => void handleSubmit()}
-        disabled={pending || preparing}
+        disabled={
+          pending ||
+          preparing ||
+          autoSendJob !== null ||
+          (autoRewrite && promptTab === "prompt" && rewriting)
+        }
         size="lg"
         className="w-full"
       >
@@ -2010,7 +2070,13 @@ export default function VideoPanel({
           ? "Preparing media…"
           : pending
             ? "Uploading media…"
-            : smartOn
+            : autoSendJob !== null
+              ? "Rewriting, then generating…"
+              : autoRewrite && promptTab === "prompt"
+                ? smartOn
+                  ? "Rewrite and generate · smart length"
+                  : `Rewrite and generate · ${duration}s`
+                : smartOn
               ? "Generate video · smart length"
               : `Generate video · ${duration}s`}
       </Btn>
