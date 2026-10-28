@@ -382,6 +382,8 @@ export function RelocateSelect({
   trigger = "icon",
   triggerLabel = "Move or copy",
   className = "",
+  disabled = false,
+  count = 1,
 }: {
   projects: { id: string; name: string }[];
   currentProjectId: string | null;
@@ -390,40 +392,27 @@ export function RelocateSelect({
   trigger?: "icon" | "text";
   triggerLabel?: string;
   className?: string;
+  disabled?: boolean;
+  count?: number;
 }) {
   const targets = [
     ...projects.filter((p) => p.id !== currentProjectId),
     ...(currentProjectId !== null ? [{ id: "none", name: "Unassigned" }] : []),
   ];
   const [open, setOpen] = useState(false);
+  const [action, setAction] = useState<"move" | "copy">("move");
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
   if (!targets.length) return null;
 
-  const group = (action: "move" | "copy", heading: string) => (
-    <div className="py-1">
-      <p className="px-3 py-1 text-2xs text-muted">{heading}</p>
-      {targets.map((p) => (
-        <button
-          key={`${action}-${p.id}`}
-          type="button"
-          onClick={() => {
-            setOpen(false);
-            onPick(action, p.id);
-          }}
-          className="w-full min-h-8 px-3 text-left text-xs text-ink/85 hover:text-ink hover:bg-panel2 transition-colors truncate"
-        >
-          {p.name}
-        </button>
-      ))}
-    </div>
-  );
+  const what = count === 1 ? "it" : `all ${count}`;
 
   return (
     <>
       <button
         ref={btnRef}
         type="button"
+        disabled={disabled}
         onClick={() => setOpen((o) => !o)}
         title={label}
         aria-label={label}
@@ -431,7 +420,7 @@ export function RelocateSelect({
         aria-expanded={open}
         className={
           trigger === "text"
-            ? btnClass("ghost", "sm", className)
+            ? btnClass("ghost", "sm", `disabled:opacity-40 disabled:cursor-not-allowed ${className}`)
             : `inline-flex items-center justify-center w-8 h-8 shrink-0 rounded-md border text-sm leading-none transition-colors ${
                 open
                   ? "text-accent bg-accent/15 border-accent/40"
@@ -445,13 +434,39 @@ export function RelocateSelect({
         open={open}
         anchorRef={btnRef}
         onClose={() => setOpen(false)}
-        width={224}
+        width={240}
         label={label}
-        className="py-1"
+        className="p-2"
       >
-        {group("move", "Move to")}
-        <div className="border-t border-line-soft" />
-        {group("copy", "Copy to")}
+        <Seg
+          value={action}
+          onChange={setAction}
+          options={[
+            { value: "move", label: "Move" },
+            { value: "copy", label: "Copy" },
+          ]}
+        />
+        <p className="px-1 pt-2 pb-1 text-2xs text-muted">
+          {action === "move"
+            ? `Takes ${what} out of this project.`
+            : `Keeps ${what} here and adds a copy.`}
+        </p>
+        <div className="flex flex-col">
+          {targets.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => {
+                setOpen(false);
+                onPick(action, p.id);
+              }}
+              className="w-full min-h-8 px-2 rounded-md text-left text-xs text-ink/85 hover:text-ink hover:bg-panel2 transition-colors truncate"
+            >
+              {action === "move" ? "Move to " : "Copy to "}
+              <span className="font-medium text-ink">{p.name}</span>
+            </button>
+          ))}
+        </div>
       </Popover>
     </>
   );

@@ -48,6 +48,7 @@ export default function CharactersPanel({
   const [busy, setBusy] = useState(false);
   const [descBusy, setDescBusy] = useState(false);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
+  const [listNotice, setListNotice] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [existingImages, setExistingImages] = useState<number[]>([]);
   const [editHadAudio, setEditHadAudio] = useState(false);
@@ -99,30 +100,40 @@ export default function CharactersPanel({
   }, []);
 
   async function relocateCharacter(
-    id: string,
+    c: Character,
     action: "move" | "copy",
     target: string
   ) {
     const form = new FormData();
     form.append(action === "copy" ? "copyProject" : "moveProject", target);
-    const res = await fetch(`/api/characters/${id}`, {
+    const res = await fetch(`/api/characters/${c.id}`, {
       method: "PATCH",
       body: form,
     });
     if (!res.ok) {
-      setNotice({ kind: "err", msg: `Could not ${action} this character` });
+      setListNotice({ kind: "err", msg: `Could not ${action} ${c.name}` });
       return;
     }
     const where =
       target === "none"
         ? "Unassigned"
         : projects.find((p) => p.id === target)?.name || "another project";
-    setNotice({
+    setListNotice({
       kind: "ok",
-      msg: action === "copy" ? `Copied to ${where}` : `Moved to ${where}`,
+      msg:
+        action === "copy"
+          ? `Copied ${c.name} to ${where}`
+          : `Moved ${c.name} to ${where}`,
     });
+    if (action === "move" && editingId === c.id) resetForm();
     await refresh();
   }
+
+  useEffect(() => {
+    if (!listNotice) return;
+    const id = window.setTimeout(() => setListNotice(null), 4000);
+    return () => window.clearTimeout(id);
+  }, [listNotice]);
 
   function resetForm() {
     setName("");
@@ -731,6 +742,18 @@ export default function CharactersPanel({
       </Panel>
 
       <Panel title={`Saved characters (${characters.length})`}>
+        {listNotice && (
+          <p
+            role="status"
+            className={`mb-3 border rounded-md px-3 py-2 text-xs ${
+              listNotice.kind === "ok"
+                ? "border-ok/30 bg-ok/10 text-ok"
+                : "border-danger/30 bg-danger/10 text-danger"
+            }`}
+          >
+            {listNotice.msg}
+          </p>
+        )}
         {characters.length === 0 ? (
           <p className="text-sm text-muted py-4 text-center">
             No characters yet — create one above.
@@ -823,9 +846,9 @@ export default function CharactersPanel({
                       currentProjectId={projectId}
                       trigger="text"
                       triggerLabel="Move or copy"
-                      label="Move or copy this character to another project"
+                      label={`Move or copy ${c.name} to another project`}
                       onPick={(action, target) =>
-                        void relocateCharacter(c.id, action, target)
+                        void relocateCharacter(c, action, target)
                       }
                     />
                     <Btn

@@ -8,7 +8,7 @@ import {
   prefetchFile,
   revealInExplorer,
 } from "./asset-file-cache";
-import { fmtElapsed, IconBtn } from "./ui";
+import { Btn, fmtElapsed, IconBtn, RelocateSelect } from "./ui";
 import { formatSGD } from "@/lib/pricing";
 import type { TaskRecord } from "@/lib/types";
 
@@ -106,22 +106,14 @@ function Tile({
         }
       }}
       className={`cursor-pointer text-left border bg-panel rounded-md overflow-hidden hover:border-accent/60 transition-colors group ${
-        task.pinned ? "border-accent/70" : "border-line"
+        selecting && selected
+          ? "border-accent ring-1 ring-accent"
+          : task.pinned
+            ? "border-accent/70"
+            : "border-line"
       }`}
     >
       <div className="relative aspect-video bg-black/50 flex items-center justify-center overflow-hidden">
-        {selecting && (
-          <span
-            aria-hidden
-            className={`absolute top-1.5 left-1.5 z-10 w-4 h-4 rounded-sm border flex items-center justify-center text-2xs leading-none ${
-              selected
-                ? "bg-accent border-accent text-accent-ink"
-                : "bg-black/70 border-muted text-transparent"
-            }`}
-          >
-            ✓
-          </span>
-        )}
         {preview === "video" && (
           <video
             src={task.videoUrl}
@@ -161,6 +153,18 @@ function Tile({
             task.kind === "video" ? "text-cat-video" : "text-cat-image"
           }`}
         >
+          {selecting && (
+            <span
+              aria-hidden
+              className={`-ml-0.5 w-4 h-4 rounded-sm border flex items-center justify-center text-2xs leading-none ${
+                selected
+                  ? "bg-accent border-accent text-accent-ink"
+                  : "bg-black/70 border-muted text-transparent"
+              }`}
+            >
+              ✓
+            </span>
+          )}
           {active && (
             <span className="w-1.5 h-1.5 rounded-full bg-warn animate-pulse-dot" />
           )}
@@ -339,7 +343,7 @@ export default function AssetsGallery({
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([]);
   const [bulkBusy, setBulkBusy] = useState(false);
-  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
+  const [bulkNotice, setBulkNotice] = useState<{ kind: "ok" | "err"; msg: string } | null>(null);
 
   useEffect(() => {
     fetch("/api/projects")
@@ -371,18 +375,24 @@ export default function AssetsGallery({
       });
       const d = await res.json();
       if (!res.ok) {
-        setBulkNotice(d?.message || `HTTP ${res.status}`);
+        setBulkNotice({ kind: "err", msg: d?.message || `Could not ${action} the selection (HTTP ${res.status})` });
         return;
       }
-      setBulkNotice(
-        action === "move" ? `moved ${d.moved}` : `copied ${d.copied}`
-      );
+      const where =
+        target === "none"
+          ? "Unassigned"
+          : projects.find((p) => p.id === target)?.name || "another project";
+      const n = action === "move" ? d.moved : d.copied;
+      setBulkNotice({
+        kind: "ok",
+        msg: `${action === "move" ? "Moved" : "Copied"} ${n} asset${n === 1 ? "" : "s"} to ${where}`,
+      });
       setPicked(new Set());
       setSelecting(false);
       onChanged?.();
-      setTimeout(() => setBulkNotice(null), 2500);
+      setTimeout(() => setBulkNotice(null), 4000);
     } catch {
-      setBulkNotice("bulk action failed");
+      setBulkNotice({ kind: "err", msg: `Could not ${action} the selection` });
     } finally {
       setBulkBusy(false);
     }
@@ -446,7 +456,8 @@ export default function AssetsGallery({
 
   return (
     <>
-      <div className="flex items-center gap-2 mb-3 flex-wrap">
+      <div className="sticky top-0 z-10 -mx-px px-px pb-3 bg-bg/90 backdrop-blur-sm">
+      <div className="flex items-center gap-2 flex-wrap">
         <div className="flex gap-0.5 p-1 rounded-md border border-line bg-bg">
           {(
             [
@@ -526,59 +537,49 @@ export default function AssetsGallery({
         </div>
       </div>
       {selecting && (
-        <div className="flex flex-wrap items-center gap-2 mb-3 border border-line bg-panel2/60 rounded-md px-3 py-2">
-          <span className="text-2xs text-muted">
-            {picked.size} selected
+        <div className="flex flex-wrap items-center gap-2 mt-2 border border-line bg-panel2 rounded-md px-3 py-1.5">
+          <span className="text-xs text-ink tabular-nums">
+            {picked.size
+              ? `${picked.size} selected`
+              : "Click tiles to select them"}
           </span>
-          <select
-            value=""
-            disabled={!picked.size || bulkBusy}
-            onChange={(e) => e.target.value && void bulk("move", e.target.value)}
-            className="bg-panel2 border border-line rounded-md px-2.5 h-8 text-xs text-ink outline-none focus:border-accent/60 disabled:opacity-40"
-          >
-            <option value="">move to…</option>
-            {projects
-              .filter((p) => p.id !== projectId)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            {projectId !== null && <option value="none">Unassigned</option>}
-          </select>
-          <select
-            value=""
-            disabled={!picked.size || bulkBusy}
-            onChange={(e) => e.target.value && void bulk("copy", e.target.value)}
-            className="bg-panel2 border border-line rounded-md px-2.5 h-8 text-xs text-ink outline-none focus:border-accent/60 disabled:opacity-40"
-          >
-            <option value="">copy to…</option>
-            {projects
-              .filter((p) => p.id !== projectId)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            {projectId !== null && <option value="none">Unassigned</option>}
-          </select>
-          <button
-            type="button"
-            onClick={() => {
-              setSelecting(false);
-              setPicked(new Set());
-            }}
-            className="text-xs text-muted hover:text-ink"
-          >
-            cancel
-          </button>
-          {bulkNotice && (
-            <span className="text-xs text-ink">
-              {bulkNotice}
-            </span>
-          )}
+          <div className="ml-auto flex items-center gap-1.5">
+            <RelocateSelect
+              projects={projects}
+              currentProjectId={projectId}
+              trigger="text"
+              triggerLabel={bulkBusy ? "Working…" : "Move or copy"}
+              label={`Move or copy ${picked.size} selected asset${picked.size === 1 ? "" : "s"} to another project`}
+              disabled={!picked.size || bulkBusy}
+              count={picked.size}
+              onPick={(action, target) => void bulk(action, target)}
+            />
+            <Btn
+              variant="subtle"
+              size="sm"
+              onClick={() => {
+                setSelecting(false);
+                setPicked(new Set());
+              }}
+            >
+              Cancel
+            </Btn>
+          </div>
         </div>
       )}
+      {bulkNotice && (
+        <p
+          role="status"
+          className={`mt-2 border rounded-md px-3 py-2 text-xs ${
+            bulkNotice.kind === "ok"
+              ? "border-ok/30 bg-ok/10 text-ok"
+              : "border-danger/30 bg-danger/10 text-danger"
+          }`}
+        >
+          {bulkNotice.msg}
+        </p>
+      )}
+      </div>
       <div
         className="grid gap-3"
         style={{
