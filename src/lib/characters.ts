@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
 import type { Character, CharacterLook } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "characters");
@@ -51,18 +52,15 @@ function imagePrefix(lookId: string): string {
 }
 
 async function readIndex(): Promise<Character[]> {
-  try {
-    const raw = await fs.readFile(INDEX_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Character[]).map(normalize) : [];
-  } catch {
-    return [];
-  }
+  return (await readJsonArray<Character>(INDEX_FILE)).map(normalize);
 }
 
-async function writeIndex(list: Character[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(INDEX_FILE, JSON.stringify(list, null, 2), "utf8");
+function writeIndex(list: Character[]): Promise<void> {
+  return writeJsonAtomic(INDEX_FILE, list);
+}
+
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  return withFileLock(INDEX_FILE, fn);
 }
 
 export async function listCharacters(
@@ -83,12 +81,14 @@ export async function setCharacterProject(
   projectId: string | null
 ): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-  const list = await readIndex();
-  const rec = list.find((c) => c.id === id);
-  if (!rec) return false;
-  rec.projectId = projectId;
-  await writeIndex(list);
-  return true;
+  return locked(async () => {
+    const list = await readIndex();
+    const rec = list.find((c) => c.id === id);
+    if (!rec) return false;
+    rec.projectId = projectId;
+    await writeIndex(list);
+    return true;
+  });
 }
 
 export async function setCharacterHidden(
@@ -96,12 +96,14 @@ export async function setCharacterHidden(
   hidden: boolean
 ): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-  const list = await readIndex();
-  const rec = list.find((c) => c.id === id);
-  if (!rec) return false;
-  rec.hidden = hidden || undefined;
-  await writeIndex(list);
-  return true;
+  return locked(async () => {
+    const list = await readIndex();
+    const rec = list.find((c) => c.id === id);
+    if (!rec) return false;
+    rec.hidden = hidden || undefined;
+    await writeIndex(list);
+    return true;
+  });
 }
 
 export async function copyCharacter(
@@ -131,22 +133,26 @@ export async function copyCharacter(
     updatedAt: undefined,
     projectId,
   };
-  const fresh = await readIndex();
-  fresh.push(copy);
-  await writeIndex(fresh);
+  await locked(async () => {
+    const fresh = await readIndex();
+    fresh.push(copy);
+    await writeIndex(fresh);
+  });
   return copy;
 }
 
 export async function assignAllCharacters(projectId: string): Promise<number> {
-  const list = await readIndex();
-  let n = 0;
-  for (const c of list)
-    if (!c.projectId) {
-      c.projectId = projectId;
-      n++;
-    }
-  if (n) await writeIndex(list);
-  return n;
+  return locked(async () => {
+    const list = await readIndex();
+    let n = 0;
+    for (const c of list)
+      if (!c.projectId) {
+        c.projectId = projectId;
+        n++;
+      }
+    if (n) await writeIndex(list);
+    return n;
+  });
 }
 
 export type StoredFile = {
@@ -214,20 +220,24 @@ export async function createCharacter(input: {
     ],
     activeLookId: "main",
   });
-  const list = await readIndex();
-  list.push(character);
-  await writeIndex(list);
+  await locked(async () => {
+    const list = await readIndex();
+    list.push(character);
+    await writeIndex(list);
+  });
   return character;
 }
 
 export async function deleteCharacter(id: string): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-  const list = await readIndex();
-  const next = list.filter((c) => c.id !== id);
-  if (next.length === list.length) return false;
-  await writeIndex(next);
-  await fs.rm(path.join(DATA_DIR, id), { recursive: true, force: true });
-  return true;
+  return locked(async () => {
+    const list = await readIndex();
+    const next = list.filter((c) => c.id !== id);
+    if (next.length === list.length) return false;
+    await writeIndex(next);
+    await fs.rm(path.join(DATA_DIR, id), { recursive: true, force: true });
+    return true;
+  });
 }
 
 export async function updateCharacter(
@@ -244,87 +254,89 @@ export async function updateCharacter(
   }
 ): Promise<Character | "invalid"> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return "invalid";
-  const list = await readIndex();
-  const pos = list.findIndex((c) => c.id === id);
-  if (pos === -1) return "invalid";
-  const current = list[pos];
-  const dir = path.join(DATA_DIR, id);
-  const looks = [...(current.looks ?? [])];
+  return locked(async () => {
+    const list = await readIndex();
+    const pos = list.findIndex((c) => c.id === id);
+    if (pos === -1) return "invalid";
+    const current = list[pos];
+    const dir = path.join(DATA_DIR, id);
+    const looks = [...(current.looks ?? [])];
 
-  let look: CharacterLook | undefined;
-  if (input.lookId === "new") {
-    if (looks.length >= MAX_LOOKS) return "invalid";
-    look = {
-      id: randomUUID().replace(/-/g, "").slice(0, 10),
-      name: "",
-      description: "",
-      imageCount: 0,
+    let look: CharacterLook | undefined;
+    if (input.lookId === "new") {
+      if (looks.length >= MAX_LOOKS) return "invalid";
+      look = {
+        id: randomUUID().replace(/-/g, "").slice(0, 10),
+        name: "",
+        description: "",
+        imageCount: 0,
+      };
+      looks.push(look);
+    } else {
+      look = looks.find((l) => l.id === (input.lookId ?? current.activeLookId));
+    }
+    if (!look) return "invalid";
+    const prefix = imagePrefix(look.id);
+
+    const existing = await findFiles(id, prefix);
+    const keep =
+      input.keepImageIndices ?? existing.map((_, i) => i);
+    const kept: { bytes: Buffer; contentType: string }[] = [];
+    for (const i of keep) {
+      if (!Number.isInteger(i) || i < 0 || i >= existing.length) continue;
+      kept.push({
+        bytes: await fs.readFile(existing[i]),
+        contentType: contentTypeFor(existing[i]),
+      });
+    }
+    const finalImages = [...kept, ...(input.newImages || [])];
+    if (finalImages.length === 0 || finalImages.length > 6) return "invalid";
+
+    for (const f of existing) await fs.rm(f, { force: true });
+    for (let i = 0; i < finalImages.length; i++) {
+      const img = finalImages[i];
+      await fs.writeFile(
+        path.join(dir, `${prefix}${i}${extFor(img.contentType, ".png")}`),
+        img.bytes
+      );
+    }
+
+    const now = Date.now();
+    const lookPos = looks.findIndex((l) => l.id === look.id);
+    looks[lookPos] = {
+      ...look,
+      name:
+        input.lookName?.trim() || look.name || `Look ${lookPos + 1}`,
+      description: input.description?.trim() ?? look.description,
+      imageCount: finalImages.length,
+      updatedAt: now,
     };
-    looks.push(look);
-  } else {
-    look = looks.find((l) => l.id === (input.lookId ?? current.activeLookId));
-  }
-  if (!look) return "invalid";
-  const prefix = imagePrefix(look.id);
 
-  const existing = await findFiles(id, prefix);
-  const keep =
-    input.keepImageIndices ?? existing.map((_, i) => i);
-  const kept: { bytes: Buffer; contentType: string }[] = [];
-  for (const i of keep) {
-    if (!Number.isInteger(i) || i < 0 || i >= existing.length) continue;
-    kept.push({
-      bytes: await fs.readFile(existing[i]),
-      contentType: contentTypeFor(existing[i]),
+    let hasAudio = current.hasAudio;
+    if (input.removeAudio) {
+      for (const f of await findFiles(id, "audio")) await fs.rm(f, { force: true });
+      hasAudio = false;
+    }
+    if (input.audio) {
+      for (const f of await findFiles(id, "audio")) await fs.rm(f, { force: true });
+      await fs.writeFile(
+        path.join(dir, `audio${extFor(input.audio.contentType, ".mp3")}`),
+        input.audio.bytes
+      );
+      hasAudio = true;
+    }
+
+    const updated: Character = syncFromLooks({
+      ...current,
+      name: input.name?.trim() || current.name,
+      looks,
+      hasAudio,
+      updatedAt: now,
     });
-  }
-  const finalImages = [...kept, ...(input.newImages || [])];
-  if (finalImages.length === 0 || finalImages.length > 6) return "invalid";
-
-  for (const f of existing) await fs.rm(f, { force: true });
-  for (let i = 0; i < finalImages.length; i++) {
-    const img = finalImages[i];
-    await fs.writeFile(
-      path.join(dir, `${prefix}${i}${extFor(img.contentType, ".png")}`),
-      img.bytes
-    );
-  }
-
-  const now = Date.now();
-  const lookPos = looks.findIndex((l) => l.id === look.id);
-  looks[lookPos] = {
-    ...look,
-    name:
-      input.lookName?.trim() || look.name || `Look ${lookPos + 1}`,
-    description: input.description?.trim() ?? look.description,
-    imageCount: finalImages.length,
-    updatedAt: now,
-  };
-
-  let hasAudio = current.hasAudio;
-  if (input.removeAudio) {
-    for (const f of await findFiles(id, "audio")) await fs.rm(f, { force: true });
-    hasAudio = false;
-  }
-  if (input.audio) {
-    for (const f of await findFiles(id, "audio")) await fs.rm(f, { force: true });
-    await fs.writeFile(
-      path.join(dir, `audio${extFor(input.audio.contentType, ".mp3")}`),
-      input.audio.bytes
-    );
-    hasAudio = true;
-  }
-
-  const updated: Character = syncFromLooks({
-    ...current,
-    name: input.name?.trim() || current.name,
-    looks,
-    hasAudio,
-    updatedAt: now,
+    list[pos] = updated;
+    await writeIndex(list);
+    return updated;
   });
-  list[pos] = updated;
-  await writeIndex(list);
-  return updated;
 }
 
 export async function setActiveLook(
@@ -332,17 +344,19 @@ export async function setActiveLook(
   lookId: string
 ): Promise<Character | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id) || !LOOK_ID.test(lookId)) return null;
-  const list = await readIndex();
-  const pos = list.findIndex((c) => c.id === id);
-  if (pos === -1) return null;
-  if (!list[pos].looks?.some((l) => l.id === lookId)) return null;
-  list[pos] = syncFromLooks({
-    ...list[pos],
-    activeLookId: lookId,
-    updatedAt: Date.now(),
+  return locked(async () => {
+    const list = await readIndex();
+    const pos = list.findIndex((c) => c.id === id);
+    if (pos === -1) return null;
+    if (!list[pos].looks?.some((l) => l.id === lookId)) return null;
+    list[pos] = syncFromLooks({
+      ...list[pos],
+      activeLookId: lookId,
+      updatedAt: Date.now(),
+    });
+    await writeIndex(list);
+    return list[pos];
   });
-  await writeIndex(list);
-  return list[pos];
 }
 
 export async function deleteLook(
@@ -350,21 +364,23 @@ export async function deleteLook(
   lookId: string
 ): Promise<Character | "last" | null> {
   if (!/^[0-9a-f-]{36}$/i.test(id) || !LOOK_ID.test(lookId)) return null;
-  const list = await readIndex();
-  const pos = list.findIndex((c) => c.id === id);
-  if (pos === -1) return null;
-  const looks = list[pos].looks ?? [];
-  if (!looks.some((l) => l.id === lookId)) return null;
-  if (looks.length <= 1) return "last";
-  for (const f of await findFiles(id, imagePrefix(lookId)))
-    await fs.rm(f, { force: true });
-  list[pos] = syncFromLooks({
-    ...list[pos],
-    looks: looks.filter((l) => l.id !== lookId),
-    updatedAt: Date.now(),
+  return locked(async () => {
+    const list = await readIndex();
+    const pos = list.findIndex((c) => c.id === id);
+    if (pos === -1) return null;
+    const looks = list[pos].looks ?? [];
+    if (!looks.some((l) => l.id === lookId)) return null;
+    if (looks.length <= 1) return "last";
+    for (const f of await findFiles(id, imagePrefix(lookId)))
+      await fs.rm(f, { force: true });
+    list[pos] = syncFromLooks({
+      ...list[pos],
+      looks: looks.filter((l) => l.id !== lookId),
+      updatedAt: Date.now(),
+    });
+    await writeIndex(list);
+    return list[pos];
   });
-  await writeIndex(list);
-  return list[pos];
 }
 
 async function findFiles(id: string, prefix: string): Promise<string[]> {

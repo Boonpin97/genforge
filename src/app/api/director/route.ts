@@ -3,7 +3,7 @@ import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { buildUserPrompt, getSystemPrompt } from "@/lib/director";
 import { chat } from "@/lib/chat";
 import { requireModel, roleModel } from "@/lib/config";
-import { estimateText } from "@/lib/estimate";
+import { estimateText, priced } from "@/lib/estimate";
 import { listCharacters } from "@/lib/characters";
 import { listDirectorScripts, recordDirectorRun } from "@/lib/analytics";
 import { parseProjectParam } from "@/lib/projects";
@@ -98,7 +98,7 @@ export async function POST(req: NextRequest) {
     }
 
     const usage = res.usage;
-    const estimate = res.cost ?? estimateText(entry, usage);
+    const estimate = priced(entry, res.cost ?? estimateText(entry, usage));
 
     const runId = await recordDirectorRun({
       model,

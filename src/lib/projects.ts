@@ -1,6 +1,6 @@
-import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
 import type { Project, ProjectCounts } from "./types";
 import { assignAllAssets, listAssets, setAssetsProject } from "./assets";
 import {
@@ -20,19 +20,16 @@ const DATA_DIR = path.join(process.cwd(), "data", "projects");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const ID_RE = /^[0-9a-f-]{36}$/i;
 
-async function readIndex(): Promise<Project[]> {
-  try {
-    const raw = await fs.readFile(INDEX_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as Project[]) : [];
-  } catch {
-    return [];
-  }
+function readIndex(): Promise<Project[]> {
+  return readJsonArray<Project>(INDEX_FILE);
 }
 
-async function writeIndex(list: Project[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(INDEX_FILE, JSON.stringify(list, null, 2), "utf8");
+function writeIndex(list: Project[]): Promise<void> {
+  return writeJsonAtomic(INDEX_FILE, list);
+}
+
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  return withFileLock(INDEX_FILE, fn);
 }
 
 export function parseProjectParam(
@@ -44,6 +41,11 @@ export function parseProjectParam(
 }
 
 export async function ensureSeed(): Promise<void> {
+  if ((await readIndex()).length) return;
+  await locked(seed);
+}
+
+async function seed(): Promise<void> {
   const list = await readIndex();
   if (list.length) return;
   const [assets, scripts, chars, uploads] = await Promise.all([
@@ -133,9 +135,11 @@ export async function createProject(input: {
     createdAt: now,
     updatedAt: now,
   };
-  const list = await readIndex();
-  list.unshift(project);
-  await writeIndex(list);
+  await locked(async () => {
+    const list = await readIndex();
+    list.unshift(project);
+    await writeIndex(list);
+  });
   return project;
 }
 
@@ -144,27 +148,33 @@ export async function updateProject(
   input: { name?: string; description?: string }
 ): Promise<Project | null> {
   if (!ID_RE.test(id)) return null;
-  const list = await readIndex();
-  const pos = list.findIndex((p) => p.id === id);
-  if (pos === -1) return null;
-  if (input.name !== undefined) {
-    const name = input.name.trim().slice(0, 80);
-    if (!name) throw new Error("Project name is required.");
-    list[pos].name = name;
-  }
-  if (input.description !== undefined)
-    list[pos].description = input.description.trim().slice(0, 300) || undefined;
-  list[pos].updatedAt = Date.now();
-  await writeIndex(list);
-  return list[pos];
+  return locked(async () => {
+    const list = await readIndex();
+    const pos = list.findIndex((p) => p.id === id);
+    if (pos === -1) return null;
+    if (input.name !== undefined) {
+      const name = input.name.trim().slice(0, 80);
+      if (!name) throw new Error("Project name is required.");
+      list[pos].name = name;
+    }
+    if (input.description !== undefined)
+      list[pos].description = input.description.trim().slice(0, 300) || undefined;
+    list[pos].updatedAt = Date.now();
+    await writeIndex(list);
+    return list[pos];
+  });
 }
 
 export async function deleteProject(id: string): Promise<boolean> {
   if (!ID_RE.test(id)) return false;
-  const list = await readIndex();
-  const next = list.filter((p) => p.id !== id);
-  if (next.length === list.length) return false;
-  await writeIndex(next);
+  const removed = await locked(async () => {
+    const list = await readIndex();
+    const next = list.filter((p) => p.id !== id);
+    if (next.length === list.length) return false;
+    await writeIndex(next);
+    return true;
+  });
+  if (!removed) return false;
   await Promise.all([
     assignAllToNullAssets(id),
     assignAllToNullRuns(id),

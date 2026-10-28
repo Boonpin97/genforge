@@ -121,6 +121,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       taskId,
       requestId: out.generation_id || null,
+      provider: "openrouter",
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {

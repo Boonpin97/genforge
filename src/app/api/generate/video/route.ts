@@ -148,6 +148,7 @@ export async function POST(req: NextRequest) {
       taskId: out.output.task_id,
       status: out.output.task_status || "PENDING",
       requestId: out.request_id || null,
+      provider,
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {

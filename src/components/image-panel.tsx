@@ -380,8 +380,10 @@ export default function ImagePanel({
         chars = [];
       }
       const text = prompt;
-      const mentioned = chars.filter((c) =>
-        new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text)
+      const mentioned = chars.filter(
+        (c) =>
+          !c.hidden &&
+          new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text)
       );
       const attachedIds = new Set(
         working

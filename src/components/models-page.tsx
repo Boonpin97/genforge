@@ -41,6 +41,7 @@ const PROVIDER_HINTS: Record<ProviderId, string> = {
 
 function priceLine(m: ModelEntry): string {
   const p = m.pricing;
+  if (p.free) return "";
   const table = (t?: Record<string, number>) =>
     t
       ? Object.entries(t)
@@ -112,6 +113,7 @@ const VIDEO_FIELDS: FieldSpec[] = [
   { kind: "bool", path: ["policy", "audio"], label: "Generates audio" },
   { kind: "bool", path: ["policy", "seed"], label: "Accepts a seed" },
   { kind: "bool", path: ["policy", "watermark"], label: "Has a watermark option" },
+  { kind: "bool", path: ["pricing", "free"], label: "No cost — count every run as $0" },
   { kind: "table", path: ["pricing", "perSecond"], label: "Price per second", hint: "resolution=USD, or default=USD" },
   { kind: "table", path: ["pricing", "perSecondNoAudio"], label: "Price per second without audio", hint: "optional" },
 ];
@@ -132,6 +134,7 @@ const IMAGE_FIELDS: FieldSpec[] = [
   { kind: "bool", path: ["policy", "promptExtend"], label: "Has a prompt rewrite option" },
   { kind: "bool", path: ["policy", "watermark"], label: "Has a watermark option" },
   { kind: "bool", path: ["policy", "seed"], label: "Accepts a seed" },
+  { kind: "bool", path: ["pricing", "free"], label: "No cost — count every run as $0" },
   { kind: "table", path: ["pricing", "perImage"], label: "Price per image", hint: "default=USD, or 1k= / 2k=" },
   { kind: "table", path: ["pricing", "perInputImage"], label: "Price per input image", hint: "optional" },
 ];
@@ -139,6 +142,7 @@ const IMAGE_FIELDS: FieldSpec[] = [
 const TEXT_FIELDS: FieldSpec[] = [
   { kind: "bool", path: ["policy", "vision"], label: "Reads images (can describe characters)" },
   { kind: "num", path: ["policy", "maxTokens"], label: "Output tokens, max" },
+  { kind: "bool", path: ["pricing", "free"], label: "No cost — count every run as $0" },
   { kind: "num", path: ["pricing", "per1KInput"], label: "Input price", hint: "USD per 1K tokens" },
   { kind: "num", path: ["pricing", "per1KOutput"], label: "Output price", hint: "USD per 1K tokens" },
 ];
@@ -547,6 +551,11 @@ function ModelRow({
         {m.deprecated && (
           <span className="self-center text-2xs text-warn bg-warn/10 rounded-full px-2 py-0.5">
             Retired upstream
+          </span>
+        )}
+        {m.pricing.free && (
+          <span className="self-center text-2xs text-ok bg-ok/10 rounded-full px-2 py-0.5">
+            No cost
           </span>
         )}
         {m.enabled && !keyed && (

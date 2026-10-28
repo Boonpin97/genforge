@@ -33,6 +33,7 @@ import type {
   AssetRefMeta,
   ImageSettings,
   MediaPayload,
+  PollProvider,
   StoredAsset,
   TaskRecord,
   VideoSettings,
@@ -58,7 +59,7 @@ function assetToTask(a: StoredAsset): TaskRecord {
     prompt: a.prompt,
     createdAt: a.createdAt,
     status:
-      a.status === "pending"
+      a.status === "pending" && !a.results.length
         ? ("queued" as const)
         : a.status === "failed"
           ? ("failed" as const)
@@ -69,6 +70,7 @@ function assetToTask(a: StoredAsset): TaskRecord {
         : undefined,
     taskId: a.taskId,
     requestId: a.requestId,
+    pollProvider: a.pollProvider,
     usage: a.usage,
     estimate: a.estimate,
     params: a.params,
@@ -122,9 +124,13 @@ function assetToTask(a: StoredAsset): TaskRecord {
   };
 }
 
+const MAX_POLL_MISSES = 30;
+const POLL_PROVIDERS: PollProvider[] = ["dashscope", "qwencloud", "tokenplan", "openrouter"];
+
 type SubmitJson = {
   taskId?: string;
   requestId?: string | null;
+  provider?: string;
   images?: unknown;
   usage?: TaskRecord["usage"];
   estimate?: number | null;
@@ -390,6 +396,7 @@ export default function Studio({
   );
 
   const tasksRef = useRef(tasks);
+  const pollMissesRef = useRef(new Map<string, number>());
   useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
@@ -457,7 +464,7 @@ export default function Studio({
   }, []);
 
   const persistAsset = useCallback(
-    async (task: TaskRecord, opts?: { pending?: boolean }) => {
+    async (task: TaskRecord, opts?: { pending?: boolean }): Promise<boolean> => {
       try {
         const results =
           task.kind === "video"
@@ -465,7 +472,7 @@ export default function Studio({
               ? [task.videoUrl]
               : []
             : task.imageUrls || [];
-        if (!results.length && !opts?.pending) return;
+        if (!results.length && !opts?.pending) return false;
         const refs: AssetRefMeta[] = [];
         const files: { i: number; blob: Blob; name: string }[] = [];
         let settings: Record<string, string | number | boolean | undefined> = {};
@@ -551,6 +558,7 @@ export default function Studio({
             status: opts?.pending ? "pending" : "succeeded",
             taskId: task.taskId,
             requestId: task.requestId,
+            pollProvider: task.pollProvider,
             usage: task.usage,
             estimate: task.estimate,
             params: task.params,
@@ -579,11 +587,13 @@ export default function Studio({
             );
         }
         updateTask(task.id, patch);
+        return true;
       } catch (e) {
         console.error("asset save failed", e);
         setBanner(
           `Asset could not be saved to disk: ${e instanceof Error ? e.message : String(e)}`
         );
+        return false;
       }
     },
     [updateTask, projectId]
@@ -592,6 +602,25 @@ export default function Studio({
   const pollTask = useCallback(
     async (task: TaskRecord) => {
       if (!task.taskId) return;
+      const resolved = models.find((m) => m.id === task.model)?.resolvedProvider;
+      const provider =
+        task.pollProvider ??
+        (task.model.includes("/")
+          ? "openrouter"
+          : resolved === "tokenplan"
+            ? "tokenplan"
+            : models.length
+              ? videoProvider
+              : null);
+      if (!provider) return;
+      const transient = (err: TaskRecord["error"]) => {
+        const n = (pollMissesRef.current.get(task.id) ?? 0) + 1;
+        pollMissesRef.current.set(task.id, n);
+        if (n >= MAX_POLL_MISSES) {
+          pollMissesRef.current.delete(task.id);
+          updateTask(task.id, { status: "failed", error: err });
+        }
+      };
       try {
         const qs = new URLSearchParams();
         if (task.params && typeof task.params.resolution === "string")
@@ -601,21 +630,20 @@ export default function Studio({
           qs.set("duration", String(task.params.duration));
         if (typeof task.params?.audio === "boolean")
           qs.set("audio", String(task.params.audio));
-        const resolved = models.find((m) => m.id === task.model)?.resolvedProvider;
-        if (resolved === "openrouter") qs.set("provider", "openrouter");
-        else if (resolved === "tokenplan") qs.set("provider", "tokenplan");
-        else if (videoProvider === "qwencloud") qs.set("provider", "qwencloud");
+        if (provider !== "dashscope") qs.set("provider", provider);
         const q = qs.size ? `?${qs.toString()}` : "";
         const res = await fetch(`/api/task/${task.taskId}${q}`);
-        const data = await res.json();
-        if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        if (!res.ok || !data) {
           const err = data?.error || {
             code: `HTTP_${res.status}`,
             message: "Failed to poll task status",
           };
-          updateTask(task.id, { status: "failed", error: err });
+          if (!data || res.status === 429 || res.status >= 500) transient(err);
+          else updateTask(task.id, { status: "failed", error: err });
           return;
         }
+        pollMissesRef.current.delete(task.id);
         const patch: Partial<TaskRecord> = {
           status: data.status,
           videoUrl: data.videoUrl || undefined,
@@ -682,8 +710,11 @@ export default function Studio({
           }).catch(() => {});
         }
       } catch (e) {
-        // Transient network error - keep polling on next tick.
         console.error("poll failed", e);
+        transient({
+          code: "NetworkError",
+          message: e instanceof Error ? e.message : String(e),
+        });
       }
     },
     [models, persistAsset, updateTask, videoProvider]
@@ -785,14 +816,20 @@ export default function Studio({
           });
           return false;
         }
+        const pollProvider = POLL_PROVIDERS.find((p) => p === data.provider);
         updateTask(id, {
           status: "queued",
           taskId: data.taskId,
           requestId: data.requestId || undefined,
+          pollProvider,
         });
-        const created = { ...record, taskId: data.taskId as string };
-        void persistAsset(created, { pending: true });
-        setTimeout(() => void pollTask(created), 3000);
+        const created = { ...record, taskId: data.taskId as string, pollProvider };
+        void persistAsset(created, { pending: true }).then((saved) =>
+          setTimeout(
+            () => void pollTask(saved ? { ...created, assetId: id } : created),
+            3000
+          )
+        );
         return true;
       } catch (e) {
         updateTask(id, {

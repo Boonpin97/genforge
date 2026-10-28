@@ -61,5 +61,6 @@ export function sanitizePricing(raw: unknown): ModelPricing {
   }
   if (num(raw.per1KInput)) out.per1KInput = raw.per1KInput as number;
   if (num(raw.per1KOutput)) out.per1KOutput = raw.per1KOutput as number;
+  if (raw.free === true) out.free = true;
   return out;
 }

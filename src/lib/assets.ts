@@ -2,26 +2,25 @@ import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { archiveDeletedAssets } from "./spend";
-import type { AssetRefMeta, StoredAsset } from "./types";
+import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
+import type { AssetRefMeta, PollProvider, StoredAsset } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "assets");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
 const MAX_FILE_BYTES = 300 * 1024 * 1024;
 const ID_RE = /^[A-Za-z0-9_-]{6,64}$/;
+const POLL_PROVIDERS: PollProvider[] = ["dashscope", "qwencloud", "tokenplan", "openrouter"];
 
-async function readIndex(): Promise<StoredAsset[]> {
-  try {
-    const raw = await fs.readFile(INDEX_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as StoredAsset[]) : [];
-  } catch {
-    return [];
-  }
+function readIndex(): Promise<StoredAsset[]> {
+  return readJsonArray<StoredAsset>(INDEX_FILE);
 }
 
-async function writeIndex(list: StoredAsset[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(INDEX_FILE, JSON.stringify(list, null, 2), "utf8");
+function writeIndex(list: StoredAsset[]): Promise<void> {
+  return writeJsonAtomic(INDEX_FILE, list);
+}
+
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  return withFileLock(INDEX_FILE, fn);
 }
 
 export async function listAssets(
@@ -37,32 +36,36 @@ export async function listAssets(
   return filtered.sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export async function assignAllAssets(projectId: string): Promise<number> {
-  const list = await readIndex();
-  let n = 0;
-  for (const a of list)
-    if (!a.projectId) {
-      a.projectId = projectId;
-      n++;
-    }
-  if (n) await writeIndex(list);
-  return n;
+export function assignAllAssets(projectId: string): Promise<number> {
+  return locked(async () => {
+    const list = await readIndex();
+    let n = 0;
+    for (const a of list)
+      if (!a.projectId) {
+        a.projectId = projectId;
+        n++;
+      }
+    if (n) await writeIndex(list);
+    return n;
+  });
 }
 
-export async function setAssetsProject(
+export function setAssetsProject(
   ids: string[],
   projectId: string | null
 ): Promise<number> {
   const wanted = new Set(ids);
-  const list = await readIndex();
-  let n = 0;
-  for (const a of list)
-    if (wanted.has(a.id)) {
-      a.projectId = projectId;
-      n++;
-    }
-  if (n) await writeIndex(list);
-  return n;
+  return locked(async () => {
+    const list = await readIndex();
+    let n = 0;
+    for (const a of list)
+      if (wanted.has(a.id)) {
+        a.projectId = projectId;
+        n++;
+      }
+    if (n) await writeIndex(list);
+    return n;
+  });
 }
 
 export async function copyAssets(
@@ -101,11 +104,12 @@ export async function copyAssets(
       taskId: undefined,
     });
   }
-  if (copies.length) {
-    const fresh = await readIndex();
-    fresh.unshift(...copies);
-    await writeIndex(fresh);
-  }
+  if (copies.length)
+    await locked(async () => {
+      const fresh = await readIndex();
+      fresh.unshift(...copies);
+      await writeIndex(fresh);
+    });
   return copies;
 }
 
@@ -239,6 +243,9 @@ export async function createAsset(
     error: meta.error,
     taskId: meta.taskId,
     requestId: meta.requestId,
+    pollProvider: POLL_PROVIDERS.includes(meta.pollProvider as PollProvider)
+      ? meta.pollProvider
+      : undefined,
     usage: meta.usage,
     estimate: meta.estimate,
     params: meta.params,
@@ -249,36 +256,36 @@ export async function createAsset(
     copiedFrom: meta.copiedFrom,
   };
 
-  const list = await readIndex();
-  list.unshift(asset);
-  await writeIndex(list);
-  return asset;
+  return locked(async () => {
+    const all = await readIndex();
+    const prev = all.find((a) => a.id === asset.id);
+    if (prev?.results.length && !asset.results.length) return prev;
+    const list = all.filter((a) => a.id !== asset.id);
+    list.unshift(asset);
+    await writeIndex(list);
+    return asset;
+  });
 }
+
+type CompleteInput = {
+  videoUrl?: string;
+  imageUrls?: string[];
+  usage?: StoredAsset["usage"];
+  estimate?: number | null;
+  requestId?: string;
+};
 
 export async function completeAsset(
   id: string,
-  input: {
-    videoUrl?: string;
-    imageUrls?: string[];
-    usage?: StoredAsset["usage"];
-    estimate?: number | null;
-    requestId?: string;
-  }
+  input: CompleteInput
 ): Promise<StoredAsset | null> {
   if (!ID_RE.test(id)) return null;
-  const list = await readIndex();
-  const pos = list.findIndex((a) => a.id === id);
-  if (pos === -1) return null;
-  const asset = list[pos];
-  if (asset.results.length > 0) {
-    asset.status = "succeeded";
-    asset.error = undefined;
-    await writeIndex(list);
-    return asset;
-  }
+  const before = (await readIndex()).find((a) => a.id === id);
+  if (!before) return null;
+  if (before.results.length > 0) return markSucceeded(id, null, input);
   const dir = path.join(DATA_DIR, id);
   await fs.mkdir(dir, { recursive: true });
-  const urls = asset.kind === "video"
+  const urls = before.kind === "video"
     ? input.videoUrl ? [input.videoUrl] : []
     : (input.imageUrls || []).slice(0, 8);
   const results: { file: string; mime: string }[] = [];
@@ -287,16 +294,31 @@ export async function completeAsset(
     if (dl) results.push(dl);
   }
   if (!results.length) return null;
-  asset.results = results;
-  asset.status = "succeeded";
-  asset.error = undefined;
-  if (input.usage) asset.usage = input.usage;
-  if (input.estimate !== undefined && input.estimate !== null)
-    asset.estimate = input.estimate;
-  if (input.requestId) asset.requestId = input.requestId;
-  list[pos] = asset;
-  await writeIndex(list);
-  return asset;
+  return markSucceeded(id, results, input);
+}
+
+function markSucceeded(
+  id: string,
+  results: { file: string; mime: string }[] | null,
+  input: CompleteInput
+): Promise<StoredAsset | null> {
+  return locked(async () => {
+    const list = await readIndex();
+    const asset = list.find((a) => a.id === id);
+    if (!asset) return null;
+    if (!asset.results.length) {
+      if (!results) return null;
+      asset.results = results;
+      if (input.usage) asset.usage = input.usage;
+      if (input.estimate !== undefined && input.estimate !== null)
+        asset.estimate = input.estimate;
+      if (input.requestId) asset.requestId = input.requestId;
+    }
+    asset.status = "succeeded";
+    asset.error = undefined;
+    await writeIndex(list);
+    return asset;
+  });
 }
 
 export async function failAsset(
@@ -304,68 +326,73 @@ export async function failAsset(
   error: string
 ): Promise<StoredAsset | null> {
   if (!ID_RE.test(id)) return null;
-  const list = await readIndex();
-  const pos = list.findIndex((a) => a.id === id);
-  if (pos === -1) return null;
-  list[pos] = { ...list[pos], status: "failed", error: error.slice(0, 300) };
-  await writeIndex(list);
-  return list[pos];
-}
-
-export async function setAssetHidden(
-  id: string,
-  hidden: boolean
-): Promise<boolean> {
-  const list = await readIndex();
-  const asset = list.find((a) => a.id === id);
-  if (!asset) return false;
-  if (hidden) asset.hidden = true;
-  else delete asset.hidden;
-  await writeIndex(list);
-  return true;
-}
-
-export async function setAssetPinned(
-  id: string,
-  pinned: boolean
-): Promise<boolean> {
-  const list = await readIndex();
-  const asset = list.find((a) => a.id === id);
-  if (!asset) return false;
-  if (pinned) asset.pinned = true;
-  else delete asset.pinned;
-  await writeIndex(list);
-  return true;
-}
-
-export async function setAssetUsed(id: string): Promise<boolean> {
-  const list = await readIndex();
-  const asset = list.find((a) => a.id === id);
-  if (!asset) return false;
-  if (!asset.used) {
-    asset.used = true;
+  return locked(async () => {
+    const list = await readIndex();
+    const pos = list.findIndex((a) => a.id === id);
+    if (pos === -1) return null;
+    if (list[pos].results.length) return list[pos];
+    list[pos] = { ...list[pos], status: "failed", error: error.slice(0, 300) };
     await writeIndex(list);
-  }
-  return true;
+    return list[pos];
+  });
+}
+
+function setFlag(
+  id: string,
+  flag: "hidden" | "pinned" | "used",
+  on: boolean
+): Promise<boolean> {
+  return locked(async () => {
+    const list = await readIndex();
+    const asset = list.find((a) => a.id === id);
+    if (!asset) return false;
+    if (Boolean(asset[flag]) === on) return true;
+    if (on) asset[flag] = true;
+    else delete asset[flag];
+    await writeIndex(list);
+    return true;
+  });
+}
+
+export function setAssetHidden(id: string, hidden: boolean): Promise<boolean> {
+  return setFlag(id, "hidden", hidden);
+}
+
+export function setAssetPinned(id: string, pinned: boolean): Promise<boolean> {
+  return setFlag(id, "pinned", pinned);
+}
+
+export function setAssetUsed(id: string): Promise<boolean> {
+  return setFlag(id, "used", true);
 }
 
 export async function deleteAsset(id: string): Promise<boolean> {
   if (!ID_RE.test(id)) return false;
-  const list = await readIndex();
-  const gone = list.filter((a) => a.id === id);
-  const next = list.filter((a) => a.id !== id);
-  if (next.length === list.length) return false;
-  await archiveDeletedAssets(gone);
-  await writeIndex(next);
-  await fs.rm(path.join(DATA_DIR, id), { recursive: true, force: true });
-  return true;
+  const ok = await locked(async () => {
+    const list = await readIndex();
+    const gone = list.filter((a) => a.id === id);
+    const next = list.filter((a) => a.id !== id);
+    if (next.length === list.length) return false;
+    await archiveDeletedAssets(gone);
+    await writeIndex(next);
+    return true;
+  });
+  if (ok) await fs.rm(path.join(DATA_DIR, id), { recursive: true, force: true });
+  return ok;
 }
 
 export async function clearAssets(): Promise<number> {
-  const list = await readIndex();
-  await archiveDeletedAssets(list);
-  await writeIndex([]);
-  await fs.rm(DATA_DIR, { recursive: true, force: true });
+  const list = await locked(async () => {
+    const all = await readIndex();
+    await archiveDeletedAssets(all);
+    await writeIndex([]);
+    return all;
+  });
+  await Promise.all(
+    list.map((a) =>
+      fs.rm(path.join(DATA_DIR, a.id), { recursive: true, force: true })
+    )
+  );
   return list.length;
 }
 

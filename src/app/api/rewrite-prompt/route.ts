@@ -3,7 +3,7 @@ import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { buildRewriteUserPrompt, REWRITE_SYSTEM_PROMPT } from "@/lib/rewrite";
 import { chat } from "@/lib/chat";
 import { getModel, roleModel } from "@/lib/config";
-import { estimateText } from "@/lib/estimate";
+import { estimateText, priced } from "@/lib/estimate";
 import {
   createRewriteJob,
   latestOpenRewriteJob,
@@ -63,7 +63,7 @@ async function runRewrite(job: RewriteJob): Promise<void> {
     }
 
     const usage = res.usage;
-    const estimate = res.cost ?? estimateText(entry, usage);
+    const estimate = priced(entry, res.cost ?? estimateText(entry, usage));
 
     await patchRewriteJob(job.id, {
       status: "succeeded",

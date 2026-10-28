@@ -9,7 +9,7 @@ import {
 } from "@/lib/dashscope";
 import { openrouter } from "@/lib/openrouter";
 import { getModel } from "@/lib/config";
-import { estimateVideo } from "@/lib/estimate";
+import { estimateVideo, priced } from "@/lib/estimate";
 import type { TaskStatus, VideoUsage } from "@/lib/types";
 
 export const maxDuration = 30;
@@ -70,6 +70,9 @@ export async function GET(
   const resolution = sp.get("resolution") || undefined;
   const audioParam = sp.get("audio");
   const audio = audioParam === null ? undefined : audioParam !== "false";
+  const pollEntry = pollModel
+    ? await getModel(pollModel).catch(() => undefined)
+    : undefined;
 
   if (provider === "openrouter") {
     try {
@@ -112,12 +115,15 @@ export async function GET(
         estimate:
           status !== "succeeded"
             ? null
-            : cost ??
-              estimateVideo(pollModel ? await getModel(pollModel) : undefined, {
-                seconds: Number(sp.get("duration")) || undefined,
-                resolution,
-                audio,
-              }),
+            : priced(
+                pollEntry,
+                cost ??
+                  estimateVideo(pollEntry, {
+                    seconds: Number(sp.get("duration")) || undefined,
+                    resolution,
+                    audio,
+                  })
+              ),
         error:
           status === "failed"
             ? friendlyError({
@@ -182,18 +188,20 @@ export async function GET(
       requestId: out.request_id || null,
       estimate:
         status === "succeeded"
-          ? estimateVideo(pollModel ? await getModel(pollModel) : undefined, {
-              usage: out.usage,
-              resolution,
-              audio,
-            })
+          ? priced(
+              pollEntry,
+              estimateVideo(pollEntry, {
+                usage: out.usage,
+                resolution,
+                audio,
+              })
+            )
           : null,
       error:
         out.output?.code || out.code
           ? friendlyError({
               code: String(out.output?.code || out.code),
-              message:
-                String(out.output?.message || out.message) || "Task failed.",
+              message: String(out.output?.message || out.message || "Task failed."),
               requestId: out.request_id,
             })
           : status === "failed" && raw === "UNKNOWN"

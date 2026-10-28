@@ -115,7 +115,10 @@ export async function POST(
     );
     child.on("error", () => resolve(-1));
     child.on("exit", (c) => resolve(c ?? -1));
-    const t = setTimeout(() => resolve(-2), 10000);
+    const t = setTimeout(() => {
+      child.kill();
+      resolve(-2);
+    }, 10000);
     t.unref?.();
   });
 

@@ -231,6 +231,8 @@ export type AssetRefMeta = {
   characterId?: string;
 };
 
+export type PollProvider = "dashscope" | "qwencloud" | "tokenplan" | "openrouter";
+
 export type StoredAsset = {
   id: string;
   kind: "video" | "image";
@@ -241,6 +243,7 @@ export type StoredAsset = {
   error?: string;
   taskId?: string;
   requestId?: string;
+  pollProvider?: PollProvider;
   usage?: VideoUsage | ImageUsage;
   estimate?: number | null;
   params?: Record<string, string | number | boolean>;
@@ -266,6 +269,7 @@ export type TaskRecord = {
   assetId?: string;
   taskId?: string;
   requestId?: string;
+  pollProvider?: PollProvider;
   videoUrl?: string;
   imageUrls?: string[];
   usage?: VideoUsage | ImageUsage;

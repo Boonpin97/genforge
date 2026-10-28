@@ -3,7 +3,7 @@ import { dashscope, extractError, tokenplan } from "@/lib/dashscope";
 import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { requireModel } from "@/lib/config";
 import { checkImage } from "@/lib/policy-check";
-import { estimateImage } from "@/lib/estimate";
+import { estimateImage, priced } from "@/lib/estimate";
 import { upstreamModelId } from "@/lib/model-catalog";
 import type { ImageUsage } from "@/lib/types";
 
@@ -118,7 +118,10 @@ export async function POST(req: NextRequest) {
       images: imageUrls,
       usage: out.usage || null,
       requestId: out.request_id || null,
-      estimate: estimateImage(entry, { usage: out.usage, count: imageUrls.length }),
+      estimate: priced(
+        entry,
+        estimateImage(entry, { usage: out.usage, count: imageUrls.length })
+      ),
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {

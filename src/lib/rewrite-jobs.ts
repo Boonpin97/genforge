@@ -1,6 +1,6 @@
-import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
 import type { RewriteJob } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "rewrites");
@@ -12,30 +12,16 @@ const STALE_MS = 5 * 60 * 1000;
 export const INTERRUPTED_MESSAGE =
   "The rewrite was interrupted before it finished — the server restarted or the request was dropped. Press Rewrite again.";
 
-let queue: Promise<unknown> = Promise.resolve();
-
 function serialize<T>(fn: () => Promise<T>): Promise<T> {
-  const run = queue.then(fn, fn);
-  queue = run.then(
-    () => undefined,
-    () => undefined
-  );
-  return run;
+  return withFileLock(INDEX_FILE, fn);
 }
 
-async function readIndex(): Promise<RewriteJob[]> {
-  try {
-    const raw = await fs.readFile(INDEX_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as RewriteJob[]) : [];
-  } catch {
-    return [];
-  }
+function readIndex(): Promise<RewriteJob[]> {
+  return readJsonArray<RewriteJob>(INDEX_FILE);
 }
 
-async function writeIndex(list: RewriteJob[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(INDEX_FILE, JSON.stringify(list, null, 2), "utf8");
+function writeIndex(list: RewriteJob[]): Promise<void> {
+  return writeJsonAtomic(INDEX_FILE, list);
 }
 
 function expire(list: RewriteJob[]): boolean {
@@ -54,7 +40,7 @@ function expire(list: RewriteJob[]): boolean {
 
 async function load(): Promise<RewriteJob[]> {
   const list = await readIndex();
-  if (expire(list)) await writeIndex(list);
+  expire(list);
   return list;
 }
 

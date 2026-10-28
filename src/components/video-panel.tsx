@@ -287,6 +287,11 @@ export default function VideoPanel({
     return () => cancelAnimationFrame(raf);
   }, [models, modelChoice]);
 
+  const chooseModel = (id: string) => {
+    setModel(id);
+    setAudio(true);
+  };
+
   const audioCount = items.filter((i) => i.kind === "audio" && i.state !== "error").length;
   const modelLabel = entry?.label ?? "This model";
   const limitIssues = useMemo(() => {
@@ -1253,12 +1258,12 @@ export default function VideoPanel({
       const ff = firstFrame?.state === "ready" && firstFrame.url ? firstFrame : null;
       const lf =
         hasLastFrame && lastFrame?.state === "ready" && lastFrame.url ? lastFrame : null;
-      if (!ff) {
-        notify("Add a first-frame image");
-        return;
-      }
       if (firstFrame?.state === "uploading" || lastFrame?.state === "uploading") {
         notify("Wait for the frame images to finish loading");
+        return;
+      }
+      if (!ff) {
+        notify("Add a first-frame image");
         return;
       }
       setPreparing(true);
@@ -1358,8 +1363,10 @@ export default function VideoPanel({
       } catch {
         chars = [];
       }
-      const mentioned = chars.filter((c) =>
-        new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(searchText)
+      const mentioned = chars.filter(
+        (c) =>
+          !c.hidden &&
+          new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(searchText)
       );
       const attachedIds = new Set(
         working
@@ -1879,13 +1886,13 @@ export default function VideoPanel({
             {models.length > 0 && models.length <= 3 ? (
               <Seg
                 value={model}
-                onChange={setModel}
+                onChange={chooseModel}
                 options={models.map((m) => ({ value: m.id, label: m.label }))}
               />
             ) : models.length > 3 ? (
               <Select
                 value={model}
-                onChange={setModel}
+                onChange={chooseModel}
                 options={models.map((m) => ({ value: m.id, label: m.label }))}
               />
             ) : (

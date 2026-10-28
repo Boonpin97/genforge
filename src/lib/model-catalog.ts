@@ -73,6 +73,7 @@ export type ModelPricing = {
   perInputImage?: Record<string, number>;
   per1KInput?: number;
   per1KOutput?: number;
+  free?: boolean;
 };
 
 type Base = {

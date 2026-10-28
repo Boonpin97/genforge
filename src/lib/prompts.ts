@@ -1,6 +1,6 @@
-import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
 import type { PromptKind, SavedPrompt } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "prompts");
@@ -16,19 +16,16 @@ export function normalizeKind(value: unknown): PromptKind {
   return KINDS.includes(value as PromptKind) ? (value as PromptKind) : "any";
 }
 
-async function readIndex(): Promise<SavedPrompt[]> {
-  try {
-    const raw = await fs.readFile(INDEX_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as SavedPrompt[]) : [];
-  } catch {
-    return [];
-  }
+function readIndex(): Promise<SavedPrompt[]> {
+  return readJsonArray<SavedPrompt>(INDEX_FILE);
 }
 
-async function writeIndex(list: SavedPrompt[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(INDEX_FILE, JSON.stringify(list, null, 2), "utf8");
+function writeIndex(list: SavedPrompt[]): Promise<void> {
+  return writeJsonAtomic(INDEX_FILE, list);
+}
+
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  return withFileLock(INDEX_FILE, fn);
 }
 
 function titleFrom(text: string): string {
@@ -65,9 +62,11 @@ export async function createPrompt(input: {
     projectId: input.projectId ?? null,
     createdAt: Date.now(),
   };
-  const list = await readIndex();
-  list.unshift(prompt);
-  await writeIndex(list);
+  await locked(async () => {
+    const list = await readIndex();
+    list.unshift(prompt);
+    await writeIndex(list);
+  });
   return prompt;
 }
 
@@ -76,21 +75,23 @@ export async function updatePrompt(
   input: { text?: string; title?: string; kind?: unknown }
 ): Promise<SavedPrompt | null> {
   if (!ID_RE.test(id)) return null;
-  const list = await readIndex();
-  const rec = list.find((p) => p.id === id);
-  if (!rec) return null;
-  if (input.text !== undefined) {
-    const text = input.text.trim().slice(0, MAX_PROMPT_CHARS);
-    if (!text) throw new Error("Prompt text cannot be empty.");
-    rec.text = text;
-  }
-  if (input.title !== undefined)
-    rec.title =
-      input.title.trim().slice(0, MAX_TITLE_CHARS) || titleFrom(rec.text);
-  if (input.kind !== undefined) rec.kind = normalizeKind(input.kind);
-  rec.updatedAt = Date.now();
-  await writeIndex(list);
-  return rec;
+  return locked(async () => {
+    const list = await readIndex();
+    const rec = list.find((p) => p.id === id);
+    if (!rec) return null;
+    if (input.text !== undefined) {
+      const text = input.text.trim().slice(0, MAX_PROMPT_CHARS);
+      if (!text) throw new Error("Prompt text cannot be empty.");
+      rec.text = text;
+    }
+    if (input.title !== undefined)
+      rec.title =
+        input.title.trim().slice(0, MAX_TITLE_CHARS) || titleFrom(rec.text);
+    if (input.kind !== undefined) rec.kind = normalizeKind(input.kind);
+    rec.updatedAt = Date.now();
+    await writeIndex(list);
+    return rec;
+  });
 }
 
 export async function setPromptProject(
@@ -98,12 +99,14 @@ export async function setPromptProject(
   projectId: string | null
 ): Promise<boolean> {
   if (!ID_RE.test(id)) return false;
-  const list = await readIndex();
-  const rec = list.find((p) => p.id === id);
-  if (!rec) return false;
-  rec.projectId = projectId;
-  await writeIndex(list);
-  return true;
+  return locked(async () => {
+    const list = await readIndex();
+    const rec = list.find((p) => p.id === id);
+    if (!rec) return false;
+    rec.projectId = projectId;
+    await writeIndex(list);
+    return true;
+  });
 }
 
 export async function copyPrompt(
@@ -111,39 +114,44 @@ export async function copyPrompt(
   projectId: string | null
 ): Promise<SavedPrompt | null> {
   if (!ID_RE.test(id)) return null;
-  const list = await readIndex();
-  const src = list.find((p) => p.id === id);
-  if (!src) return null;
-  const copy: SavedPrompt = {
-    ...src,
-    id: randomUUID(),
-    createdAt: Date.now(),
-    updatedAt: undefined,
-    projectId,
-  };
-  const fresh = await readIndex();
-  fresh.unshift(copy);
-  await writeIndex(fresh);
-  return copy;
+  return locked(async () => {
+    const list = await readIndex();
+    const src = list.find((p) => p.id === id);
+    if (!src) return null;
+    const copy: SavedPrompt = {
+      ...src,
+      id: randomUUID(),
+      createdAt: Date.now(),
+      updatedAt: undefined,
+      projectId,
+    };
+    list.unshift(copy);
+    await writeIndex(list);
+    return copy;
+  });
 }
 
 export async function deletePrompt(id: string): Promise<boolean> {
   if (!ID_RE.test(id)) return false;
-  const list = await readIndex();
-  const next = list.filter((p) => p.id !== id);
-  if (next.length === list.length) return false;
-  await writeIndex(next);
-  return true;
+  return locked(async () => {
+    const list = await readIndex();
+    const next = list.filter((p) => p.id !== id);
+    if (next.length === list.length) return false;
+    await writeIndex(next);
+    return true;
+  });
 }
 
-export async function assignAllPrompts(projectId: string): Promise<number> {
-  const list = await readIndex();
-  let n = 0;
-  for (const p of list)
-    if (!p.projectId) {
-      p.projectId = projectId;
-      n++;
-    }
-  if (n) await writeIndex(list);
-  return n;
+export function assignAllPrompts(projectId: string): Promise<number> {
+  return locked(async () => {
+    const list = await readIndex();
+    let n = 0;
+    for (const p of list)
+      if (!p.projectId) {
+        p.projectId = projectId;
+        n++;
+      }
+    if (n) await writeIndex(list);
+    return n;
+  });
 }

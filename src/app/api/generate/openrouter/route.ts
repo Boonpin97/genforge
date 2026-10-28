@@ -4,7 +4,7 @@ import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { openrouter } from "@/lib/openrouter";
 import { requireModel } from "@/lib/config";
 import { checkImage } from "@/lib/policy-check";
-import { estimateImage } from "@/lib/estimate";
+import { estimateImage, priced } from "@/lib/estimate";
 
 export const maxDuration = 300;
 
@@ -173,7 +173,7 @@ export async function POST(req: NextRequest) {
       images,
       usage: null,
       requestId: (lastBody?.id as string) || null,
-      estimate: cost ?? estimateImage(entry, { count: images.length }),
+      estimate: priced(entry, cost ?? estimateImage(entry, { count: images.length })),
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {

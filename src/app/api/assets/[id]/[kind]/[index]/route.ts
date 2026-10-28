@@ -109,7 +109,8 @@ export async function GET(
       start = Math.max(0, file.size - Number(m[2]));
       end = file.size - 1;
     }
-    if (start >= file.size || end >= file.size || start > end) {
+    end = Math.min(end, file.size - 1);
+    if (start >= file.size || start > end) {
       return new NextResponse(null, {
         status: 416,
         headers: {
@@ -139,5 +140,6 @@ export async function HEAD(
   ctx: { params: Promise<{ id: string; kind: string; index: string }> }
 ) {
   const res = await GET(req as unknown as NextRequest, ctx);
+  await res.body?.cancel().catch(() => {});
   return new NextResponse(null, { status: res.status, headers: res.headers });
 }

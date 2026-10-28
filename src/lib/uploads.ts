@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
+import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
 import type { UploadRecord } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "uploads");
@@ -29,19 +30,16 @@ const EXT_MIME: Record<string, string> = Object.fromEntries(
   )
 );
 
-async function readIndex(): Promise<UploadRecord[]> {
-  try {
-    const raw = await fs.readFile(INDEX_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as UploadRecord[]) : [];
-  } catch {
-    return [];
-  }
+function readIndex(): Promise<UploadRecord[]> {
+  return readJsonArray<UploadRecord>(INDEX_FILE);
 }
 
-async function writeIndex(list: UploadRecord[]): Promise<void> {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(INDEX_FILE, JSON.stringify(list, null, 2), "utf8");
+function writeIndex(list: UploadRecord[]): Promise<void> {
+  return writeJsonAtomic(INDEX_FILE, list);
+}
+
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  return withFileLock(INDEX_FILE, fn);
 }
 
 export function classifyMime(mime: string, name: string): "image" | "audio" | null {
@@ -85,12 +83,14 @@ export async function setUploadProject(
   id: string,
   projectId: string | null
 ): Promise<boolean> {
-  const list = await readIndex();
-  const rec = list.find((u) => u.id === id);
-  if (!rec) return false;
-  rec.projectId = projectId;
-  await writeIndex(list);
-  return true;
+  return locked(async () => {
+    const list = await readIndex();
+    const rec = list.find((u) => u.id === id);
+    if (!rec) return false;
+    rec.projectId = projectId;
+    await writeIndex(list);
+    return true;
+  });
 }
 
 export async function copyUpload(
@@ -116,22 +116,26 @@ export async function copyUpload(
     createdAt: Date.now(),
     projectId,
   };
-  const fresh = await readIndex();
-  fresh.unshift(copy);
-  await writeIndex(fresh);
+  await locked(async () => {
+    const fresh = await readIndex();
+    fresh.unshift(copy);
+    await writeIndex(fresh);
+  });
   return copy;
 }
 
-export async function assignAllUploads(projectId: string): Promise<number> {
-  const list = await readIndex();
-  let n = 0;
-  for (const u of list)
-    if (!u.projectId) {
-      u.projectId = projectId;
-      n++;
-    }
-  if (n) await writeIndex(list);
-  return n;
+export function assignAllUploads(projectId: string): Promise<number> {
+  return locked(async () => {
+    const list = await readIndex();
+    let n = 0;
+    for (const u of list)
+      if (!u.projectId) {
+        u.projectId = projectId;
+        n++;
+      }
+    if (n) await writeIndex(list);
+    return n;
+  });
 }
 
 export async function createUploads(
@@ -166,30 +170,38 @@ export async function createUploads(
       projectId: projectId ?? null,
     });
   }
-  if (created.length) {
-    const list = await readIndex();
-    list.unshift(...created);
-    await writeIndex(list);
-  }
+  if (created.length)
+    await locked(async () => {
+      const list = await readIndex();
+      list.unshift(...created);
+      await writeIndex(list);
+    });
   return created;
 }
 
 export async function deleteUpload(id: string): Promise<boolean> {
   if (!/^[0-9a-f-]{36}$/i.test(id)) return false;
-  const list = await readIndex();
-  const next = list.filter((u) => u.id !== id);
-  if (next.length === list.length) return false;
-  await writeIndex(next);
-  const removed = list.find((u) => u.id === id);
-  if (removed)
-    await fs.rm(path.join(DATA_DIR, removed.filename), { force: true });
+  const removed = await locked(async () => {
+    const list = await readIndex();
+    const next = list.filter((u) => u.id !== id);
+    if (next.length === list.length) return null;
+    await writeIndex(next);
+    return list.find((u) => u.id === id) ?? null;
+  });
+  if (!removed) return false;
+  await fs.rm(path.join(DATA_DIR, removed.filename), { force: true });
   return true;
 }
 
 export async function clearUploads(): Promise<number> {
-  const list = await readIndex();
-  await writeIndex([]);
-  await fs.rm(DATA_DIR, { recursive: true, force: true });
+  const list = await locked(async () => {
+    const all = await readIndex();
+    await writeIndex([]);
+    return all;
+  });
+  await Promise.all(
+    list.map((u) => fs.rm(path.join(DATA_DIR, u.filename), { force: true }))
+  );
   return list.length;
 }
 

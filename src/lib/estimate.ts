@@ -1,6 +1,13 @@
 import { rateFor, type ModelEntry } from "./model-catalog";
 import type { ImageUsage, VideoUsage } from "./types";
 
+export function priced(
+  model: ModelEntry | undefined,
+  cost: number | null
+): number | null {
+  return model?.pricing.free ? 0 : cost;
+}
+
 function tierFromSR(sr: number | undefined): string | undefined {
   if (typeof sr !== "number") return undefined;
   if (sr <= 480) return "480P";

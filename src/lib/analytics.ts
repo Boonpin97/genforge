@@ -1,22 +1,24 @@
-import { promises as fs } from "fs";
 import path from "path";
 import { randomUUID } from "crypto";
 import { listAssets } from "./assets";
 import { listDeletedAssets, videoDurationSec } from "./spend";
+import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
 import type { CostRecord, DirectorRun } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "analytics");
 const RUNS_FILE = path.join(DATA_DIR, "director-runs.json");
 const MAX_RUNS = 1000;
 
-async function readRuns(): Promise<DirectorRun[]> {
-  try {
-    const raw = await fs.readFile(RUNS_FILE, "utf8");
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as DirectorRun[]) : [];
-  } catch {
-    return [];
-  }
+function readRuns(): Promise<DirectorRun[]> {
+  return readJsonArray<DirectorRun>(RUNS_FILE);
+}
+
+function writeRuns(runs: DirectorRun[]): Promise<void> {
+  return writeJsonAtomic(RUNS_FILE, runs.slice(0, MAX_RUNS));
+}
+
+function locked<T>(fn: () => Promise<T>): Promise<T> {
+  return withFileLock(RUNS_FILE, fn);
 }
 
 export async function recordDirectorRun(input: {
@@ -31,9 +33,8 @@ export async function recordDirectorRun(input: {
   kind?: "director" | "rewrite";
   projectId?: string | null;
 }): Promise<string> {
-  const runs = await readRuns();
   const id = randomUUID();
-  runs.unshift({
+  const run: DirectorRun = {
     id,
     createdAt: Date.now(),
     model: input.model,
@@ -48,31 +49,27 @@ export async function recordDirectorRun(input: {
     revised: input.revised,
     kind: input.kind ?? "director",
     projectId: input.projectId ?? null,
+  };
+  await locked(async () => {
+    const runs = await readRuns();
+    runs.unshift(run);
+    await writeRuns(runs);
   });
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  await fs.writeFile(
-    RUNS_FILE,
-    JSON.stringify(runs.slice(0, MAX_RUNS), null, 2),
-    "utf8"
-  );
   return id;
 }
 
-export async function assignAllRuns(projectId: string): Promise<number> {
-  const runs = await readRuns();
-  let n = 0;
-  for (const r of runs)
-    if (!r.projectId) {
-      r.projectId = projectId;
-      n++;
-    }
-  if (n)
-    await fs.writeFile(
-      RUNS_FILE,
-      JSON.stringify(runs.slice(0, MAX_RUNS), null, 2),
-      "utf8"
-    );
-  return n;
+export function assignAllRuns(projectId: string): Promise<number> {
+  return locked(async () => {
+    const runs = await readRuns();
+    let n = 0;
+    for (const r of runs)
+      if (!r.projectId) {
+        r.projectId = projectId;
+        n++;
+      }
+    if (n) await writeRuns(runs);
+    return n;
+  });
 }
 
 export async function setRunsProject(
@@ -80,20 +77,17 @@ export async function setRunsProject(
   projectId: string | null
 ): Promise<number> {
   const wanted = new Set(ids);
-  const runs = await readRuns();
-  let n = 0;
-  for (const r of runs)
-    if (wanted.has(r.id)) {
-      r.projectId = projectId;
-      n++;
-    }
-  if (n)
-    await fs.writeFile(
-      RUNS_FILE,
-      JSON.stringify(runs.slice(0, MAX_RUNS), null, 2),
-      "utf8"
-    );
-  return n;
+  return locked(async () => {
+    const runs = await readRuns();
+    let n = 0;
+    for (const r of runs)
+      if (wanted.has(r.id)) {
+        r.projectId = projectId;
+        n++;
+      }
+    if (n) await writeRuns(runs);
+    return n;
+  });
 }
 
 export async function copyRuns(
@@ -101,25 +95,23 @@ export async function copyRuns(
   projectId: string | null
 ): Promise<number> {
   const wanted = new Set(ids);
-  const runs = await readRuns();
-  const copies: DirectorRun[] = runs
-    .filter((r) => wanted.has(r.id) && (r.projectId ?? null) !== projectId)
-    .map((r) => ({
-      ...r,
-      id: randomUUID(),
-      createdAt: Date.now(),
-      projectId,
-      copied: true,
-    }));
-  if (copies.length) {
-    runs.unshift(...copies);
-    await fs.writeFile(
-      RUNS_FILE,
-      JSON.stringify(runs.slice(0, MAX_RUNS), null, 2),
-      "utf8"
-    );
-  }
-  return copies.length;
+  return locked(async () => {
+    const runs = await readRuns();
+    const copies: DirectorRun[] = runs
+      .filter((r) => wanted.has(r.id) && (r.projectId ?? null) !== projectId)
+      .map((r) => ({
+        ...r,
+        id: randomUUID(),
+        createdAt: Date.now(),
+        projectId,
+        copied: true,
+      }));
+    if (copies.length) {
+      runs.unshift(...copies);
+      await writeRuns(runs);
+    }
+    return copies.length;
+  });
 }
 
 export type DirectorScript = {
