@@ -330,6 +330,8 @@ export async function updateCharacter(
       ...current,
       name: input.name?.trim() || current.name,
       looks,
+      activeLookId:
+        input.lookId === "new" ? look.id : current.activeLookId,
       hasAudio,
       updatedAt: now,
     });

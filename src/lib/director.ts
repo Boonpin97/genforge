@@ -257,6 +257,45 @@ export function buildAppearancePrompt(name: string, hint?: string): string {
   }`;
 }
 
+const APPEND_MARKER = "APPEND";
+
+const EXTEND_RE =
+  /\b(extend\w*|extension|continu\w*|sequel|follow[- ]?up|keep going|carry on|what happens next|next scenes?|(generate|write|add|make|give( me)?)\s+(\w+\s+){0,2}(more|another|further|new|extra)\b|more scenes?|another scene|part \d+|after (that|this|the ending))|继续|续写|延续|扩展|更多/i;
+
+export function isExtendRequest(instruction: string): boolean {
+  return EXTEND_RE.test(instruction);
+}
+
+function sceneNumbers(script: string): number[] {
+  return [...script.matchAll(/^\s*(\d+)\.\s+\S/gm)].map((m) => Number(m[1]));
+}
+
+function lastSceneNumber(script: string): number {
+  return Math.max(0, ...sceneNumbers(script));
+}
+
+export function mergeExtension(
+  baseScript: string,
+  output: string
+): { script: string; appended: number } | null {
+  const text = output.trim();
+  const firstBreak = text.indexOf("\n");
+  const head = (firstBreak === -1 ? text : text.slice(0, firstBreak)).trim();
+  if (!/^APPEND\b/i.test(head.replace(/[*#_`]/g, ""))) return null;
+  const body = (firstBreak === -1 ? "" : text.slice(firstBreak + 1))
+    .trim()
+    .replace(/^Storyboard\s*\n+/i, "")
+    .trim();
+  if (!body) return null;
+  const added = sceneNumbers(body);
+  if (added.length && added[0] <= lastSceneNumber(baseScript))
+    return { script: body, appended: 0 };
+  return {
+    script: `${baseScript.trim()}\n\n${body}`,
+    appended: added.length,
+  };
+}
+
 export type DirectorRequest = {
   premise: string;
   characters: Pick<Character, "name" | "description">[];
@@ -278,6 +317,21 @@ export function buildUserPrompt(req: DirectorRequest): string {
     }
     if (req.extraCast?.trim()) parts.push(`- Additional: ${req.extraCast.trim()}`);
     parts.push("");
+  }
+  if (
+    req.baseScript?.trim() &&
+    req.instruction?.trim() &&
+    isExtendRequest(req.instruction)
+  ) {
+    const last = lastSceneNumber(req.baseScript);
+    parts.push(
+      `REVISION TASK (extension): the INSTRUCTION asks to extend the storyboard below, which currently ends at scene ${last}. If the INSTRUCTION only adds new material after the existing ending, do NOT repeat any existing scene: output the single line "${APPEND_MARKER}" followed by ONLY the new scenes, numbered from ${last + 1}, in the same house style, picking up seamlessly from the last beat of scene ${last}. Do not output the "Storyboard" line in this case (this overrides format rule 1); the app appends your scenes to the existing storyboard. If the INSTRUCTION also changes, inserts between or removes existing scenes, instead output the complete revised storyboard beginning with "Storyboard", preserving untouched scenes verbatim and renumbering as needed.`
+    );
+    parts.push(`INSTRUCTION: ${req.instruction.trim()}`);
+    parts.push("ORIGINAL PREMISE: " + req.premise.trim());
+    parts.push("CURRENT STORYBOARD:");
+    parts.push(req.baseScript.trim());
+    return parts.join("\n");
   }
   if (req.baseScript?.trim() && req.instruction?.trim()) {
     parts.push(

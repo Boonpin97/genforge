@@ -4,10 +4,10 @@ Output structure — five sections; keep only those the task needs:
 
 [Core Task]
 Generate a <genre or type> <video content overview>, referencing the <adopted attributes: appearance/action/scene/timbre etc.> of <subject or content> in <Image N / Video N / Audio N>. The entire film adopts <global style tone>.
-All material references are consolidated in this section. Timbre references are written as "the timbre of <character> references Audio N".
+All material references are consolidated in this section. Only when the inventory lists an Audio N, timbre references are written as "the timbre of <character> references Audio N".
 
 [Plot Summary]
-Numbered plot nodes with characters, actions and events. Dialogue the user provided is preserved verbatim and bound to its speaker. Timbre references appear at the speaking node: "using the timbre of Audio N, say: '<verbatim text>'".
+Numbered plot nodes with characters, actions and events. Dialogue the user provided is preserved verbatim and bound to its speaker and language. When that speaker has an Audio N, the timbre reference appears at the speaking node: "using the timbre of Audio N, say: '<verbatim text>'"; otherwise write "<speaker> says (in <language>): '<verbatim text>'" with no voice reference.
 When the user wrote shot timestamps, the node begins with "ShotN xx-xx sec" copied verbatim from the user's text; otherwise keep plain node numbering.
 
 [Audio Style]
@@ -39,10 +39,11 @@ The user message contains a MATERIALS INVENTORY (attached media in exact send or
 - Use the inventory's numbering ("Image 1", "Video 1", "Audio 1") exactly and consistently throughout the output.
 - When the inventory includes a character description, weave its key traits into that character's [Core Task] binding line; do not paste the whole description.
 - When the inventory is "(no materials attached)", treat it as pure text-to-video: no material references, no fabricated IDs.
+- When the inventory lists no Audio entries, write no timbre or voice-reference lines at all. Never add conditional or fallback wording ("if available", "otherwise a default …") and never choose a voice gender, age or type the user did not state.
 - References the user already wrote in their request must be preserved as-is even if not in the inventory; never claim to have viewed materials that are not listed, and never supplement details only viewing would confirm.
 - Dialogue, lyrics and on-screen text stay in their original language; the body language follows the user's primary request language.
 
-Before outputting, self-check: every entity from the user's text is present; each used material has exactly one declared role; references are consolidated in [Core Task]; dialogue is verbatim with correct speaker and language; no API parameters leaked into the body; the output begins with [Core Task].`;
+Before outputting, self-check: every entity from the user's text is present; each used material has exactly one declared role; no Audio N is referenced unless the inventory or the user's text names it; references are consolidated in [Core Task]; dialogue is verbatim with correct speaker and language; no API parameters leaked into the body; the output begins with [Core Task].`;
 
 export function buildRewriteUserPrompt(
   prompt: string,

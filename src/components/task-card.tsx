@@ -125,7 +125,7 @@ function dragOut(
   };
 }
 
-function timecode(t: number): string {
+export function timecode(t: number): string {
   const safe = Number.isFinite(t) && t > 0 ? t : 0;
   const secs = Math.floor(safe);
   const cs = Math.floor((safe - secs) * 100);
@@ -268,7 +268,13 @@ function VideoPlayer({
   }
 
   function captureFrame():
-    | { blob: Promise<Blob | null>; name: string; w: number; h: number }
+    | {
+        blob: Promise<Blob | null>;
+        name: string;
+        w: number;
+        h: number;
+        t: number;
+      }
     | null {
     const v = videoRef.current;
     if (!v) return null;
@@ -293,6 +299,7 @@ function VideoPlayer({
         name: `frame-${tc}-${task.id.slice(0, 8)}.png`,
         w,
         h,
+        t: v.currentTime,
       };
     } catch {
       flash(
@@ -341,6 +348,7 @@ function VideoPlayer({
         new File([blob], shot.name, { type: "image/png" })
       );
       form.append("projectId", projectId || "");
+      form.append("frameTime", String(shot.t));
       const res = await fetch("/api/uploads", { method: "POST", body: form });
       const data = await res.json().catch(() => null);
       if (!res.ok) {

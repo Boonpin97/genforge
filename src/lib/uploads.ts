@@ -140,7 +140,8 @@ export function assignAllUploads(projectId: string): Promise<number> {
 
 export async function createUploads(
   files: { bytes: Buffer; name: string; contentType: string }[],
-  projectId?: string | null
+  projectId?: string | null,
+  frameTime?: number
 ): Promise<UploadRecord[]> {
   const created: UploadRecord[] = [];
   for (const f of files) {
@@ -168,6 +169,12 @@ export async function createUploads(
       size: f.bytes.byteLength,
       createdAt: Date.now(),
       projectId: projectId ?? null,
+      ...(kind === "image" &&
+      frameTime !== undefined &&
+      Number.isFinite(frameTime) &&
+      frameTime >= 0
+        ? { frameTime }
+        : {}),
     });
   }
   if (created.length)

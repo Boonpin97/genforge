@@ -159,7 +159,7 @@ export default function CharactersPanel({
     setEditingLookId(lookId);
     if (lookId === "new") {
       setLookName("");
-      setDescription("");
+      setDescription(activeLook(c).description);
       setExistingImages([]);
       return;
     }
@@ -417,7 +417,7 @@ export default function CharactersPanel({
         kind: "ok",
         msg:
           editingLookId === "new"
-            ? `New look added to ${data.character.name} — pick it under Saved characters to make it active`
+            ? `New look "${activeLook(data.character).name}" added to ${data.character.name} and now active in new generations`
             : `Character "${data.character.name}" ${editingId ? "updated" : "saved"}`,
       });
       resetForm();

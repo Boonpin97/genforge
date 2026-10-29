@@ -219,6 +219,7 @@ export type UploadRecord = {
   size: number;
   createdAt: number;
   projectId?: string | null;
+  frameTime?: number;
 };
 
 export type AssetRefMeta = {

@@ -22,6 +22,7 @@ export async function POST(req: NextRequest) {
       );
     }
     const projectIdRaw = form.get("projectId");
+    const frameRaw = form.get("frameTime");
     const created = await createUploads(
       await Promise.all(
         files.map(async (f) => ({
@@ -30,7 +31,10 @@ export async function POST(req: NextRequest) {
           contentType: f.type,
         }))
       ),
-      projectIdRaw ? String(projectIdRaw) : null
+      projectIdRaw ? String(projectIdRaw) : null,
+      typeof frameRaw === "string" && frameRaw !== ""
+        ? Number(frameRaw)
+        : undefined
     );
     if (!created.length) {
       return NextResponse.json(

@@ -329,7 +329,11 @@ export default function DirectorPanel({
       alertDone({
         channel: "director",
         ok: true,
-        title: target ? "Revision ready" : "Storyboard ready",
+        title: target
+          ? data.appendedScenes
+            ? `Storyboard extended by ${data.appendedScenes} scene${data.appendedScenes === 1 ? "" : "s"}`
+            : "Revision ready"
+          : "Storyboard ready",
         body: text.slice(0, 140),
         tag: "director",
       });

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AddTile, ASSET_DND, formatBytes } from "./drop-zone";
 import { RelocateSelect } from "./ui";
+import { timecode } from "./task-card";
 import type { UploadRecord } from "@/lib/types";
 
 function timeAgo(ts: number): string {
@@ -203,6 +204,17 @@ export default function UploadsGallery({
                 </span>
                 <span className="shrink-0">{timeAgo(u.createdAt)}</span>
               </p>
+              {u.frameTime !== undefined && (
+                <p
+                  className="text-2xs text-muted"
+                  title="Position in the video this frame was captured from, seconds:hundredths"
+                >
+                  Frame at{" "}
+                  <span className="font-mono text-ink/80">
+                    {timecode(u.frameTime)}
+                  </span>
+                </p>
+              )}
             </div>
             <button
               type="button"

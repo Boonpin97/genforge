@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ApiErrorLike, errorStatus } from "@/lib/errors";
-import { buildUserPrompt, getSystemPrompt } from "@/lib/director";
+import {
+  buildUserPrompt,
+  getSystemPrompt,
+  isExtendRequest,
+  mergeExtension,
+} from "@/lib/director";
 import { chat } from "@/lib/chat";
 import { requireModel, roleModel } from "@/lib/config";
 import { estimateText, priced } from "@/lib/estimate";
@@ -85,7 +90,11 @@ export async function POST(req: NextRequest) {
       return NextResponse.json(res.error, { status: res.status });
     }
 
-    const script = res.text;
+    const merged =
+      baseScript && res.text && isExtendRequest(instruction)
+        ? mergeExtension(baseScript, res.text)
+        : null;
+    const script = merged ? merged.script : res.text;
     if (!script) {
       return NextResponse.json(
         {
@@ -120,6 +129,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       id: runId,
       script: script.trim(),
+      appendedScenes: merged ? merged.appended : undefined,
       model,
       usage,
       estimate,
