@@ -401,11 +401,13 @@ export function RelocateSelect({
   ];
   const [open, setOpen] = useState(false);
   const [action, setAction] = useState<"move" | "copy">("move");
+  const [target, setTarget] = useState("");
   const btnRef = useRef<HTMLButtonElement | null>(null);
 
   if (!targets.length) return null;
 
   const what = count === 1 ? "it" : `all ${count}`;
+  const picked = targets.find((p) => p.id === target) ?? targets[0];
 
   return (
     <>
@@ -446,27 +448,30 @@ export function RelocateSelect({
             { value: "copy", label: "Copy" },
           ]}
         />
-        <p className="px-1 pt-2 pb-1 text-2xs text-muted">
+        <p className="px-1 pt-2 pb-2 text-2xs text-muted">
           {action === "move"
             ? `Takes ${what} out of this project.`
             : `Keeps ${what} here and adds a copy.`}
         </p>
-        <div className="flex flex-col">
-          {targets.map((p) => (
-            <button
-              key={p.id}
-              type="button"
-              onClick={() => {
-                setOpen(false);
-                onPick(action, p.id);
-              }}
-              className="w-full min-h-8 px-2 rounded-md text-left text-xs text-ink/85 hover:text-ink hover:bg-panel2 transition-colors truncate"
-            >
-              {action === "move" ? "Move to " : "Copy to "}
-              <span className="font-medium text-ink">{p.name}</span>
-            </button>
-          ))}
-        </div>
+        <Select
+          value={picked.id}
+          onChange={setTarget}
+          options={targets.map((p) => ({ value: p.id, label: p.name }))}
+        />
+        <Btn
+          variant="subtle"
+          size="md"
+          className="w-full mt-2"
+          onClick={() => {
+            setOpen(false);
+            onPick(action, picked.id);
+          }}
+        >
+          <span className="truncate">
+            {action === "move" ? "Move to " : "Copy to "}
+            {picked.name}
+          </span>
+        </Btn>
       </Popover>
     </>
   );
