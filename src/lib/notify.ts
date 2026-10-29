@@ -205,19 +205,53 @@ export function appFocused(): boolean {
   return !document.hidden && document.hasFocus();
 }
 
-export function alertDone({
-  channel,
-  ok,
-  title,
-  body,
-  tag,
-}: {
+const CLAIM_PREFIX = "genforge.alerted.";
+const CLAIM_MS = 10 * 60 * 1000;
+
+function claimAlert(tag: string): boolean {
+  try {
+    const now = Date.now();
+    for (let i = localStorage.length - 1; i >= 0; i--) {
+      const key = localStorage.key(i);
+      if (key?.startsWith(CLAIM_PREFIX) && now - Number(localStorage.getItem(key)) > CLAIM_MS)
+        localStorage.removeItem(key);
+    }
+    const key = CLAIM_PREFIX + tag;
+    if (localStorage.getItem(key)) return false;
+    localStorage.setItem(key, String(now));
+    return true;
+  } catch {
+    return true;
+  }
+}
+
+function claimAcrossTabs(tag: string): Promise<boolean> {
+  try {
+    if (navigator.locks)
+      return navigator.locks
+        .request("genforge-alert-claim", () => claimAlert(tag))
+        .catch(() => true);
+  } catch {}
+  return Promise.resolve(claimAlert(tag));
+}
+
+type Alert = {
   channel: AlertChannel;
   ok: boolean;
   title: string;
   body?: string;
   tag?: string;
-}): void {
+  once?: string;
+};
+
+export function alertDone(alert: Alert): void {
+  if (!alert.once) return fireAlert(alert);
+  void claimAcrossTabs(alert.once).then((mine) => {
+    if (mine) fireAlert(alert);
+  });
+}
+
+function fireAlert({ channel, ok, title, body, tag }: Alert): void {
   if (!alertsEnabled() || !channelEnabled(channel) || appFocused()) return;
   playChime(ok);
   badgeTitle(`${ok ? "✅" : "⚠"} ${title} · GENFORGE`);

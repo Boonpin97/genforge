@@ -13,6 +13,15 @@ import DropZone, {
   type AssetDropData,
 } from "./drop-zone";
 import { alertDone } from "@/lib/notify";
+import {
+  OSS_TTL_MS,
+  draftKey,
+  loadBlob,
+  ossUploadedAt,
+  readDraft,
+  stashMedia,
+  writeDraft,
+} from "@/lib/draft";
 import MentionTextArea, {
   escapeRe,
   type MediaMention,
@@ -137,6 +146,99 @@ async function fitImage(
 }
 
 const nextId = () => `m${Date.now()}-${idCounter++}`;
+
+type DraftItem = Omit<MediaItem, "url" | "previewUrl" | "state" | "error"> & {
+  url?: string;
+  preview?: string;
+  blob?: boolean;
+  at?: number;
+};
+
+type VideoDraft = {
+  prompt: string;
+  rewrote: string;
+  promptTab: "prompt" | "rewritten";
+  rewriting: boolean;
+  model: string;
+  resolution: string;
+  ratio: string;
+  duration: number;
+  smartDuration: boolean;
+  audio: boolean;
+  watermark: boolean;
+  genMode: "text" | "frame";
+  items: DraftItem[];
+  firstFrame: DraftItem | null;
+  lastFrame: DraftItem | null;
+};
+
+async function toDraftItem(it: MediaItem | null): Promise<DraftItem | null> {
+  if (!it || it.state !== "ready" || !it.url) return null;
+  const { url, previewUrl } = it;
+  const meta: DraftItem = {
+    id: it.id,
+    kind: it.kind,
+    name: it.name,
+    size: it.size,
+    durationSec: it.durationSec,
+    characterId: it.characterId,
+    characterLookId: it.characterLookId,
+  };
+  if (url.startsWith("data:"))
+    return (await stashMedia(it.id, url)) ? { ...meta, blob: true } : null;
+  if (url.startsWith("oss://")) {
+    const at = ossUploadedAt(it.id);
+    const blob = previewUrl.startsWith("blob:") && (await stashMedia(it.id, previewUrl));
+    return { ...meta, url, at, blob: blob || undefined };
+  }
+  return {
+    ...meta,
+    url,
+    preview: /^(blob:|data:)/i.test(previewUrl) ? undefined : previewUrl,
+  };
+}
+
+async function fromDraftItem(
+  d: DraftItem,
+  maxAudioSec: number
+): Promise<MediaItem | null> {
+  const { url, preview, blob: hasBlob, at, ...meta } = d;
+  if (!url) {
+    const blob = await loadBlob(d.id);
+    if (!blob) return null;
+    const dataUrl = await blobToDataUrl(blob);
+    return { ...meta, url: dataUrl, previewUrl: dataUrl, state: "ready" };
+  }
+  if (!url.startsWith("oss://"))
+    return { ...meta, url, previewUrl: preview || "", state: "ready" };
+  const blob = hasBlob ? await loadBlob(d.id) : null;
+  let ossUrl = url;
+  let uploadedAt = at || 0;
+  if (Date.now() - uploadedAt > OSS_TTL_MS) {
+    if (!blob) return null;
+    try {
+      const body =
+        d.kind === "audio" ? (await trimAudioBlob(blob, maxAudioSec)).blob : blob;
+      const form = new FormData();
+      form.append("file", new File([body], d.name, { type: body.type || blob.type }));
+      form.append("model", "wan3.0-video");
+      const res = await fetch("/api/upload", { method: "POST", body: form });
+      const data = await res.json();
+      if (!res.ok || typeof data?.url !== "string") return null;
+      ossUrl = data.url;
+      uploadedAt = Date.now();
+    } catch {
+      return null;
+    }
+  }
+  ossUploadedAt(d.id, uploadedAt);
+  return {
+    ...meta,
+    url: ossUrl,
+    previewUrl: blob ? URL.createObjectURL(blob) : "",
+    state: "ready",
+  };
+}
 
 export default function VideoPanel({
   onSubmit,
@@ -373,6 +475,7 @@ export default function VideoPanel({
         title: "Rewritten prompt ready",
         body: (job.rewrote || job.prompt).slice(0, 140),
         tag: `rewrite-${job.id}`,
+        once: `rewrite-${job.id}`,
       });
     } else if (job.status === "failed") {
       notify(`Rewrite failed: ${job.error || "unknown error"}`);
@@ -382,6 +485,7 @@ export default function VideoPanel({
         title: "Rewrite failed",
         body: job.error || "The rewrite did not finish",
         tag: `rewrite-${job.id}`,
+        once: `rewrite-${job.id}`,
       });
     }
     setRewriting(false);
@@ -522,6 +626,114 @@ export default function VideoPanel({
     );
     notify("Previous settings loaded — review references and submit again");
   }, [reuse]);
+
+  const draftId = draftKey(projectId, "video");
+  const draftReady = useRef<string | null>(null);
+  const draftSeq = useRef(0);
+  const draftEnv = useRef({ notify, maxAudioSec: MAX_AUDIO_SEC });
+  useEffect(() => {
+    draftEnv.current = { notify, maxAudioSec: MAX_AUDIO_SEC };
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    draftReady.current = null;
+    (async () => {
+      await Promise.resolve();
+      const d = readDraft<VideoDraft>(draftId);
+      if (cancelled) return;
+      if (!d) {
+        draftReady.current = draftId;
+        return;
+      }
+      setPrompt(d.prompt ?? "");
+      if (!d.rewriting) setRewrote(d.rewrote ?? "");
+      setPromptTab(d.promptTab === "rewritten" ? "rewritten" : "prompt");
+      if (d.model) setModel(d.model);
+      if (d.resolution) setResolution(d.resolution);
+      if (d.ratio) setRatio(d.ratio);
+      if (typeof d.duration === "number") setDuration(d.duration);
+      setSmartDuration(Boolean(d.smartDuration));
+      setAudio(d.audio !== false);
+      setWatermark(Boolean(d.watermark));
+      setGenMode(d.genMode === "frame" ? "frame" : "text");
+      const { maxAudioSec } = draftEnv.current;
+      const wanted = [...(d.items ?? []), d.firstFrame, d.lastFrame].filter(
+        (x): x is DraftItem => Boolean(x)
+      );
+      const restore = (x: DraftItem | null) =>
+        x ? fromDraftItem(x, maxAudioSec) : Promise.resolve(null);
+      const [list, ff, lf] = await Promise.all([
+        Promise.all((d.items ?? []).map((x) => restore(x))),
+        restore(d.firstFrame),
+        restore(d.lastFrame),
+      ]);
+      if (cancelled) return;
+      const restored = list.filter((x): x is MediaItem => Boolean(x));
+      const ids = new Set(restored.map((x) => x.id));
+      setItems((cur) => [...restored, ...cur.filter((x) => !ids.has(x.id))]);
+      setFirstFrame((cur) => cur ?? ff);
+      setLastFrame((cur) => cur ?? lf);
+      const lost = wanted.length - restored.length - (ff ? 1 : 0) - (lf ? 1 : 0);
+      if (lost > 0)
+        draftEnv.current.notify(
+          `${lost} attached file${lost === 1 ? "" : "s"} could not be restored — add ${lost === 1 ? "it" : "them"} again`
+        );
+      draftReady.current = draftId;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draftId]);
+
+  useEffect(() => {
+    if (draftReady.current !== draftId) return;
+    const seq = ++draftSeq.current;
+    const timer = window.setTimeout(async () => {
+      const [list, ff, lf] = await Promise.all([
+        Promise.all(items.map(toDraftItem)),
+        toDraftItem(firstFrame),
+        toDraftItem(lastFrame),
+      ]);
+      if (seq !== draftSeq.current || draftReady.current !== draftId) return;
+      const value: VideoDraft = {
+        prompt,
+        rewrote,
+        promptTab,
+        rewriting,
+        model: modelChoice,
+        resolution,
+        ratio,
+        duration,
+        smartDuration,
+        audio,
+        watermark,
+        genMode,
+        items: list.filter((x): x is DraftItem => Boolean(x)),
+        firstFrame: ff,
+        lastFrame: lf,
+      };
+      writeDraft(draftId, value);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [
+    draftId,
+    prompt,
+    rewrote,
+    promptTab,
+    rewriting,
+    modelChoice,
+    resolution,
+    ratio,
+    duration,
+    smartDuration,
+    audio,
+    watermark,
+    genMode,
+    items,
+    firstFrame,
+    lastFrame,
+  ]);
 
   function bindingLineFrom(list: MediaItem[], c: Character): string {
     const images: string[] = [];

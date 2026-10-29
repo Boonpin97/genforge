@@ -12,9 +12,19 @@ import MentionTextArea from "./mention-textarea";
 import Link from "next/link";
 import { Btn, ErrorBox, Field, Panel, Seg, Select } from "./ui";
 import { alertDone } from "@/lib/notify";
+import { draftKey, readDraft, writeDraft } from "@/lib/draft";
 import { formatSGD } from "@/lib/pricing";
 import type { ApiError, Character } from "@/lib/types";
 import type { PublicTextModel } from "@/lib/model-catalog";
+
+type DirectorDraft = {
+  premise: string;
+  extraCast: string;
+  selected: string[];
+  model: string | null;
+  creating: boolean;
+  selectedId: string | null;
+};
 
 type ScriptEntry = {
   id: string;
@@ -94,6 +104,47 @@ export default function DirectorPanel({
   const projectQs = projectId === null ? "none" : projectId;
   const loadedFor = useRef<string | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
+
+  const draftId = draftKey(projectId, "director");
+  const draftReady = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    draftReady.current = null;
+    void Promise.resolve().then(() => {
+      if (cancelled) return;
+      const d = readDraft<DirectorDraft>(draftId);
+      if (d) {
+        setPremise(d.premise ?? "");
+        setExtraCast(d.extraCast ?? "");
+        setSelected(new Set(Array.isArray(d.selected) ? d.selected : []));
+        setModel(d.model ?? null);
+        setCreating(d.creating !== false);
+        setSelectedId(d.selectedId ?? null);
+      }
+      draftReady.current = draftId;
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [draftId]);
+
+  useEffect(() => {
+    if (draftReady.current !== draftId) return;
+    const timer = window.setTimeout(() => {
+      if (draftReady.current !== draftId) return;
+      const value: DirectorDraft = {
+        premise,
+        extraCast,
+        selected: [...selected],
+        model: modelChoice,
+        creating,
+        selectedId,
+      };
+      writeDraft(draftId, value);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [draftId, premise, extraCast, selected, modelChoice, creating, selectedId]);
 
   const loadScripts = useCallback(() => {
     return fetch(`/api/director?project=${projectQs}`)

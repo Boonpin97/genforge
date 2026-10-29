@@ -439,7 +439,7 @@ export default function Studio({
   );
 
   const loadAssets = useCallback(() => {
-    fetch(`/api/assets?project=${projectId === null ? "none" : projectId}`)
+    fetch(`/api/assets?project=${projectId === null ? "none" : projectId}`, { cache: "no-store" })
       .then((r) => r.json())
       .then((d) => {
         if (!Array.isArray(d.assets)) return;
@@ -457,6 +457,18 @@ export default function Studio({
 
   useEffect(() => {
     loadAssets();
+    const visible = () => document.visibilityState === "visible";
+    const onVisible = () => {
+      if (visible()) loadAssets();
+    };
+    const timer = window.setInterval(onVisible, 15000);
+    document.addEventListener("visibilitychange", onVisible);
+    window.addEventListener("focus", onVisible);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+      window.removeEventListener("focus", onVisible);
+    };
   }, [loadAssets]);
 
   const updateTask = useCallback((id: string, patch: Partial<TaskRecord>) => {
@@ -669,6 +681,7 @@ export default function Studio({
                 ? task.prompt.slice(0, 140)
                 : patch.error?.message || "Generation failed",
             tag: task.id,
+            once: `video-${task.assetId ?? task.id}`,
           });
         }
         if (patch.videoUrl && task.status !== "succeeded") {

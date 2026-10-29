@@ -9,6 +9,7 @@ import DropZone, {
   formatBytes,
   type AssetDropData,
 } from "./drop-zone";
+import { draftKey, loadBlob, readDraft, stashMedia, writeDraft } from "@/lib/draft";
 import MentionTextArea, {
   escapeRe,
   type MediaMention,
@@ -119,6 +120,35 @@ async function fitRefImage(
 
 const nextId = () => `i${Date.now()}-${idCounter++}`;
 
+type DraftImage = { id: string; name: string; size: number; characterId?: string; url?: string };
+
+type ImageDraft = {
+  prompt: string;
+  negativePrompt: string;
+  model: string;
+  size: string;
+  n: number;
+  promptExtend: boolean;
+  watermark: boolean;
+  seed: string;
+  items: DraftImage[];
+};
+
+async function toDraftImage(it: ImageItem): Promise<DraftImage | null> {
+  if (it.state !== "ready" || !it.dataUrl) return null;
+  const meta = { id: it.id, name: it.name, size: it.size, characterId: it.characterId };
+  if (!it.dataUrl.startsWith("data:")) return { ...meta, url: it.dataUrl };
+  return (await stashMedia(it.id, it.dataUrl)) ? meta : null;
+}
+
+async function fromDraftImage(d: DraftImage): Promise<ImageItem | null> {
+  const { url, ...meta } = d;
+  if (url) return { ...meta, dataUrl: url, state: "ready" };
+  const blob = await loadBlob(d.id);
+  if (!blob) return null;
+  return { ...meta, dataUrl: await blobToDataUrl(blob), state: "ready" };
+}
+
 export default function ImagePanel({
   onSubmit,
   promptInjection,
@@ -221,6 +251,70 @@ export default function ImagePanel({
     );
     setNotice("Previous settings loaded — review and generate again");
   }, [reuse]);
+
+  const draftId = draftKey(projectId, "image");
+  const draftReady = useRef<string | null>(null);
+  const draftSeq = useRef(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    draftReady.current = null;
+    (async () => {
+      await Promise.resolve();
+      const d = readDraft<ImageDraft>(draftId);
+      if (cancelled) return;
+      if (!d) {
+        draftReady.current = draftId;
+        return;
+      }
+      setPrompt(d.prompt ?? "");
+      setNegativePrompt(d.negativePrompt ?? "");
+      if (d.model) setModel(d.model);
+      if (d.size) setSize(d.size);
+      if (typeof d.n === "number") setN(d.n);
+      setPromptExtend(Boolean(d.promptExtend));
+      setWatermark(Boolean(d.watermark));
+      setSeed(d.seed ?? "");
+      const wanted = d.items ?? [];
+      const list = (await Promise.all(wanted.map(fromDraftImage))).filter(
+        (x): x is ImageItem => Boolean(x)
+      );
+      if (cancelled) return;
+      const ids = new Set(list.map((x) => x.id));
+      setItems((cur) => [...list, ...cur.filter((x) => !ids.has(x.id))]);
+      const lost = wanted.length - list.length;
+      if (lost > 0)
+        setNotice(
+          `${lost} reference image${lost === 1 ? "" : "s"} could not be restored — add ${lost === 1 ? "it" : "them"} again`
+        );
+      draftReady.current = draftId;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [draftId]);
+
+  useEffect(() => {
+    if (draftReady.current !== draftId) return;
+    const seq = ++draftSeq.current;
+    const timer = window.setTimeout(async () => {
+      const list = await Promise.all(items.map(toDraftImage));
+      if (seq !== draftSeq.current || draftReady.current !== draftId) return;
+      const value: ImageDraft = {
+        prompt,
+        negativePrompt,
+        model: modelChoice,
+        size,
+        n,
+        promptExtend,
+        watermark,
+        seed,
+        items: list.filter((x): x is DraftImage => Boolean(x)),
+      };
+      writeDraft(draftId, value);
+    }, 400);
+    return () => window.clearTimeout(timer);
+  }, [draftId, prompt, negativePrompt, modelChoice, size, n, promptExtend, watermark, seed, items]);
 
   function bindingLineFrom(list: ImageItem[], c: Character): string {
     const readyList = list.filter((i) => i.state === "ready" && i.dataUrl);
