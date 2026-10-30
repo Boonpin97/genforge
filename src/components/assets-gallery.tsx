@@ -60,6 +60,9 @@ function Tile({
       ? ("image" as const)
       : null;
   const [copied, setCopied] = useState<"ok" | "err" | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const rendering = task.kind === "video" && task.status === "running";
+  const attempt = task.retry && !task.retry.done ? task.retry.attempts.length : 0;
   const assetUrl = task.videoUrl || task.imageUrls?.[0] || "";
   const absUrl = assetUrl
     ? /^https?:/i.test(assetUrl)
@@ -143,6 +146,13 @@ function Tile({
             <span className="font-mono text-2xs text-muted">
               {task.status === "submitting" ? "submitting" : task.kind === "video" ? "rendering" : "drawing"}
             </span>
+            {task.retry && (
+              <span className="text-2xs text-warn">
+                {task.retry.stopped ? "Stopping after" : "Retrying, attempt"}{" "}
+                {task.retry.attempts.length}
+                {task.retry.max ? ` of ${task.retry.max}` : ""}
+              </span>
+            )}
           </div>
         )}
         {!preview && !active && (
@@ -257,7 +267,8 @@ function Tile({
               }
               onClick={(e) => {
                 e.stopPropagation();
-                onDelete();
+                if (rendering) setConfirmDelete(true);
+                else onDelete();
               }}
               className={`${overlayBtn} hover:text-danger`}
             >
@@ -265,6 +276,43 @@ function Tile({
             </button>
           )}
         </div>
+        {confirmDelete && onDelete && (
+          <div
+            role="alertdialog"
+            aria-label="Delete a rendering video"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Escape") setConfirmDelete(false);
+            }}
+            title="A video that is already rendering cannot be cancelled. Deleting stops any further attempts, but this one finishes and is billed if it succeeds."
+            className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-1.5 overflow-y-auto bg-black/90 p-1.5 text-center"
+          >
+            <p className="text-2xs leading-tight text-ink">
+              {attempt ? `Attempt ${attempt}` : "It"} is rendering and may still be billed.
+            </p>
+            <div className="flex flex-wrap justify-center gap-1.5">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setConfirmDelete(false)}
+                className="min-h-8 px-2.5 rounded-md border border-line text-xs text-ink hover:bg-panel2"
+              >
+                Keep
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setConfirmDelete(false);
+                  onDelete();
+                }}
+                className="min-h-8 px-2.5 rounded-md border border-danger/50 text-xs text-danger hover:bg-danger/10"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        )}
         {copied && (
           <span
             className={`absolute inset-x-1.5 bottom-1.5 z-10 rounded-md bg-black/85 px-2 py-1.5 text-center text-2xs leading-tight ${
@@ -321,11 +369,13 @@ export default function AssetsGallery({
   onDelete,
   onToggleHidden,
   onTogglePinned,
+  onStopRetry,
   projectId,
   onChanged,
   onUploaded,
 }: {
   tasks: TaskRecord[];
+  onStopRetry?: (task: TaskRecord) => Promise<void>;
   onReuse: (task: TaskRecord) => void;
   onDelete?: (task: TaskRecord) => void;
   onToggleHidden?: (task: TaskRecord) => void;
@@ -640,6 +690,7 @@ export default function AssetsGallery({
             </div>
             <TaskCard
               task={selected}
+              onStopRetry={onStopRetry}
               projectId={projectId}
               onUploaded={onUploaded}
               onReuse={

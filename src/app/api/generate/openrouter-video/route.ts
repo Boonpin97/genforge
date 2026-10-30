@@ -1,10 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { extractError, friendlyError } from "@/lib/dashscope";
 import { ApiErrorLike, errorStatus } from "@/lib/errors";
-import { openrouter } from "@/lib/openrouter";
 import { requireModel } from "@/lib/config";
 import { checkVideo } from "@/lib/policy-check";
 import type { MediaPayload } from "@/lib/types";
+import { retryRequest, sendVideo } from "@/lib/video-retry";
 
 export const maxDuration = 60;
 
@@ -19,6 +18,7 @@ type Body = {
   resolution?: string;
   audio?: boolean;
   seed?: number;
+  retry?: { id?: string; max?: number | null };
 };
 
 const isImageUrl = (u: unknown): u is string =>
@@ -83,45 +83,20 @@ export async function POST(req: NextRequest) {
       request.generate_audio = body.audio;
     if (policy.seed && typeof body.seed === "number") request.seed = body.seed;
 
-    const res = await openrouter("/videos", { method: "POST", json: request });
-    const out = res.body as {
-      id?: string;
-      generation_id?: string;
-      error?: { code?: string | number; message?: string } | string;
-      message?: string;
-      data?: { id?: string };
-    };
+    const sent = await sendVideo({ service: "openrouter", path: "/videos", json: request });
+    if (!sent.ok) return NextResponse.json(sent.error, { status: sent.status });
 
-    if (res.status < 200 || res.status >= 300 || out.error) {
-      const errObj = typeof out.error === "string" ? { message: out.error } : out.error;
-      const err = friendlyError(
-        errObj?.message
-          ? {
-              code: String(errObj.code || `HTTP_${res.status}`),
-              message: errObj.message,
-              requestId: out.id,
-            }
-          : extractError(res.body)
-      );
-      return NextResponse.json(err, {
-        status: res.status >= 400 ? res.status : 502,
-      });
-    }
-
-    const taskId = out.id || out.data?.id;
-    if (!taskId) {
-      return NextResponse.json(
-        {
-          code: "EmptyResult",
-          message: "OpenRouter accepted the job but returned no video id.",
-        },
-        { status: 502 }
-      );
-    }
+    const retry = await retryRequest(
+      body.retry,
+      request.seed,
+      { service: "openrouter", path: "/videos", json: request },
+      sent.taskId
+    );
     return NextResponse.json({
-      taskId,
-      requestId: out.generation_id || null,
+      taskId: sent.taskId,
+      requestId: sent.requestId,
       provider: "openrouter",
+      retry,
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {

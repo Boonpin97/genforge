@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
-import { deleteAsset, setAssetHidden, setAssetPinned } from "@/lib/assets";
+import { deleteAsset, listAssets, setAssetHidden, setAssetPinned } from "@/lib/assets";
+import { stopBeforeDelete } from "@/lib/video-retry";
 
 export async function DELETE(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const asset = (await listAssets()).find((a) => a.id === id);
+  if (asset) await stopBeforeDelete(asset);
   const ok = await deleteAsset(id);
   if (!ok) {
     return NextResponse.json(

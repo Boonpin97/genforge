@@ -185,7 +185,7 @@ export default function MentionTextArea({
   value: string;
   onChange: (v: string) => void;
   getMediaMentions: () => MediaMention[];
-  onPickCharacter?: (c: Character) => void;
+  onPickCharacter?: (c: Character, via: "menu" | "typed") => void;
   rows?: number;
   maxLength?: number;
   placeholder?: string;
@@ -573,7 +573,7 @@ export default function MentionTextArea({
       setMenu(null);
       emit();
       commit();
-      onPickCharacter?.(item.character);
+      onPickCharacter?.(item.character, "menu");
       return;
     }
     const chip =
@@ -597,7 +597,7 @@ export default function MentionTextArea({
     setMenu(null);
     emit();
     commit();
-    if (item.kind === "character") onPickCharacter?.(item.character);
+    if (item.kind === "character") onPickCharacter?.(item.character, "menu");
   }
 
   return (
@@ -712,7 +712,7 @@ export default function MentionTextArea({
                 const name = (c.name || "").trim();
                 if (!name || c.hidden) continue;
                 const re = new RegExp(`(?<![\\w])${escapeRe(name)}(?![\\w-])`);
-                if (re.test(s.text) && !re.test(prev)) onPickCharacter(c);
+                if (re.test(s.text) && !re.test(prev)) onPickCharacter(c, "typed");
               }
             }
           });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import DropZone, {
@@ -33,6 +33,7 @@ import {
   Seg,
   Select,
   Slider,
+  TextInput,
   Toggle,
 } from "./ui";
 import type {
@@ -65,11 +66,14 @@ export type MediaItem = {
   error?: string;
   characterId?: string;
   characterLookId?: string;
+  characterStamp?: string;
+  characterIndex?: number;
 };
 
 export type VideoSubmitPayload = VideoSettings;
 
 const MB = 1024 * 1024;
+const MAX_SEED = 2147483647;
 const FALLBACK_POLICY = (
   DEFAULT_MODELS.find((m) => m.kind === "video") as { policy: VideoPolicy }
 ).policy;
@@ -147,6 +151,33 @@ async function fitImage(
 
 const nextId = () => `m${Date.now()}-${idCounter++}`;
 
+const VOICE_TTL_MS = 47 * 3600 * 1000;
+
+const charStamp = (c: Character) => `${activeLook(c).id}:${c.updatedAt ?? c.createdAt}`;
+
+function nameIndex(text: string, name: string): number {
+  const n = name.trim();
+  if (!n) return -1;
+  const m = new RegExp(`(?<![\w])${escapeRe(n)}(?![\w-])`).exec(text);
+  return m ? m.index : -1;
+}
+
+type Exclusion = { stamp: string; images: number[]; voice: boolean };
+
+type SyncEnv = {
+  chars: Character[];
+  charsFor: string | null | undefined;
+  projectId: string | null;
+  searchText: string;
+  pinned: string[];
+  suppressed: string[];
+  excluded: Record<string, Exclusion>;
+  frameMode: boolean;
+  maxImages: number;
+  maxAudio: number;
+  label: string;
+};
+
 type DraftItem = Omit<MediaItem, "url" | "previewUrl" | "state" | "error"> & {
   url?: string;
   preview?: string;
@@ -166,7 +197,13 @@ type VideoDraft = {
   smartDuration: boolean;
   audio: boolean;
   watermark: boolean;
+  seed?: string;
+  retry?: boolean;
+  retryMax?: string;
   genMode: "text" | "frame";
+  pinnedChars?: string[];
+  suppressedChars?: string[];
+  excludedChars?: Record<string, Exclusion>;
   items: DraftItem[];
   firstFrame: DraftItem | null;
   lastFrame: DraftItem | null;
@@ -183,6 +220,8 @@ async function toDraftItem(it: MediaItem | null): Promise<DraftItem | null> {
     durationSec: it.durationSec,
     characterId: it.characterId,
     characterLookId: it.characterLookId,
+    characterStamp: it.characterStamp,
+    characterIndex: it.characterIndex,
   };
   if (url.startsWith("data:"))
     return (await stashMedia(it.id, url)) ? { ...meta, blob: true } : null;
@@ -247,11 +286,13 @@ export default function VideoPanel({
   reuse,
   projectId,
   models,
+  active = true,
 }: {
   onSubmit: (payload: VideoSubmitPayload) => Promise<boolean>;
   promptInjection?: { text: string; nonce: number } | null;
   onSavePrompt?: (text: string) => Promise<boolean>;
-  reuse: { settings: VideoSettings; nonce: number } | null;
+  reuse: { settings: VideoSettings; nonce: number; characterIds?: string[] } | null;
+  active?: boolean;
   projectId: string | null;
   models: PublicVideoModel[];
 }) {
@@ -273,6 +314,9 @@ export default function VideoPanel({
   const [smartDuration, setSmartDuration] = useState(false);
   const [audio, setAudio] = useState(true);
   const [watermark, setWatermark] = useState(false);
+  const [seed, setSeed] = useState("");
+  const [retryOn, setRetryOn] = useState(false);
+  const [retryMax, setRetryMax] = useState("");
   const [items, setItems] = useState<MediaItem[]>([]);
   const [notices, setNotices] = useState<string[]>([]);
   const [preparing, setPreparing] = useState(false);
@@ -280,6 +324,11 @@ export default function VideoPanel({
   const [firstFrame, setFirstFrame] = useState<MediaItem | null>(null);
   const [lastFrame, setLastFrame] = useState<MediaItem | null>(null);
   const [warnedText, setWarnedText] = useState<string | null>(null);
+  const [chars, setChars] = useState<Character[]>([]);
+  const [pinnedChars, setPinnedChars] = useState<string[]>([]);
+  const [suppressedChars, setSuppressedChars] = useState<string[]>([]);
+  const [excludedChars, setExcludedChars] = useState<Record<string, Exclusion>>({});
+  const [charNotes, setCharNotes] = useState<string[]>([]);
 
   useEffect(() => {
     const raf = requestAnimationFrame(() => {
@@ -448,6 +497,112 @@ export default function VideoPanel({
     itemsRef.current = items;
   }, [items]);
 
+  const searchText = promptTab === "rewritten" ? `${prompt}\n${rewrote}` : prompt;
+  const syncEnv = useRef<SyncEnv>({
+    chars: [],
+    charsFor: undefined,
+    projectId,
+    searchText: "",
+    pinned: [],
+    suppressed: [],
+    excluded: {},
+    frameMode: false,
+    maxImages: 0,
+    maxAudio: 0,
+    label: "",
+  });
+  useEffect(() => {
+    syncEnv.current = {
+      ...syncEnv.current,
+      projectId,
+      searchText,
+      pinned: pinnedChars,
+      suppressed: suppressedChars,
+      excluded: excludedChars,
+      frameMode,
+      maxImages: MAX_IMAGES,
+      maxAudio: MAX_AUDIO,
+      label: modelLabel,
+    };
+  });
+
+  const charsSig = useRef("");
+  const loadCharacters = useCallback(async () => {
+    try {
+      const res = await fetch(
+        `/api/characters?project=${projectId === null ? "none" : projectId}`,
+        { cache: "no-store" }
+      );
+      if (!res.ok) return;
+      const d = await res.json();
+      const list: Character[] = Array.isArray(d.characters) ? d.characters : [];
+      const sig = `${projectId}|${list
+        .map(
+          (c) =>
+            `${c.id}:${c.name}:${c.hidden ? 1 : 0}:${charStamp(c)}:${c.imageCount}:${c.hasAudio ? 1 : 0}`
+        )
+        .join("|")}`;
+      if (sig === charsSig.current && syncEnv.current.charsFor === projectId) return;
+      charsSig.current = sig;
+      syncEnv.current = { ...syncEnv.current, chars: list, charsFor: projectId };
+      setChars(list);
+    } catch {}
+  }, [projectId]);
+
+  useEffect(() => {
+    let alive = true;
+    const tick = () => {
+      if (alive && document.visibilityState === "visible") void loadCharacters();
+    };
+    const first = window.setTimeout(() => {
+      if (alive) void loadCharacters();
+    }, 0);
+    if (!active)
+      return () => {
+        alive = false;
+        window.clearTimeout(first);
+      };
+    const iv = window.setInterval(tick, 1000);
+    window.addEventListener("focus", tick);
+    return () => {
+      alive = false;
+      window.clearTimeout(first);
+      window.clearInterval(iv);
+      window.removeEventListener("focus", tick);
+    };
+  }, [active, loadCharacters]);
+
+  const mediaOrder = useRef<Record<"Image" | "Video" | "Audio", string[]> | null>(null);
+  useEffect(() => {
+    const ids = (k: MediaItem["kind"]) =>
+      items.filter((i) => i.kind === k && i.state === "ready").map((i) => i.id);
+    const order = { Image: ids("image"), Video: ids("video"), Audio: ids("audio") };
+    const prev = mediaOrder.current;
+    mediaOrder.current = order;
+    if (!prev) return;
+    const maps: Record<string, Map<number, number>> = {};
+    let changed = false;
+    for (const k of ["Image", "Video", "Audio"] as const) {
+      const m = new Map<number, number>();
+      prev[k].forEach((id, i) => {
+        const j = order[k].indexOf(id);
+        if (j >= 0 && j !== i) m.set(i + 1, j + 1);
+      });
+      if (m.size) changed = true;
+      maps[k] = m;
+    }
+    if (!changed) return;
+    const raf = requestAnimationFrame(() =>
+      setPrompt((p) =>
+        p.replace(/@(Image|Video|Audio) (\d+)(?!\d)/g, (all, k: string, n: string) => {
+          const to = maps[k]?.get(Number(n));
+          return to ? `@${k} ${to}` : all;
+        })
+      )
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [items]);
+
   const ackRewriteJob = (id: string) => {
     void fetch(`/api/rewrite-prompt/${id}/ack`, { method: "POST" }).catch(
       () => {}
@@ -586,6 +741,12 @@ export default function VideoPanel({
     setDuration((d) => (s.duration === -1 ? d : s.duration));
     setAudio(s.audio);
     setWatermark(s.watermark);
+    setSeed(s.seed !== undefined ? String(s.seed) : "");
+    setRetryOn(Boolean(s.retry));
+    setRetryMax(s.retryMax ? String(s.retryMax) : "");
+    setPinnedChars(reuse.characterIds ?? []);
+    setSuppressedChars([]);
+    setExcludedChars({});
     const toItem = (m: MediaPayload, fallback: string): MediaItem => {
       const kind: MediaItem["kind"] =
         m.type === "reference_video" ? "video" : m.type === "reference_audio" ? "audio" : "image";
@@ -656,6 +817,12 @@ export default function VideoPanel({
       setSmartDuration(Boolean(d.smartDuration));
       setAudio(d.audio !== false);
       setWatermark(Boolean(d.watermark));
+      setSeed(d.seed ?? "");
+      setRetryOn(Boolean(d.retry));
+      setRetryMax(d.retryMax ?? "");
+      setPinnedChars(Array.isArray(d.pinnedChars) ? d.pinnedChars : []);
+      setSuppressedChars(Array.isArray(d.suppressedChars) ? d.suppressedChars : []);
+      setExcludedChars(d.excludedChars && typeof d.excludedChars === "object" ? d.excludedChars : {});
       setGenMode(d.genMode === "frame" ? "frame" : "text");
       const { maxAudioSec } = draftEnv.current;
       const wanted = [...(d.items ?? []), d.firstFrame, d.lastFrame].filter(
@@ -708,6 +875,12 @@ export default function VideoPanel({
         smartDuration,
         audio,
         watermark,
+        seed,
+        retry: retryOn,
+        retryMax,
+        pinnedChars,
+        suppressedChars,
+        excludedChars,
         genMode,
         items: list.filter((x): x is DraftItem => Boolean(x)),
         firstFrame: ff,
@@ -729,6 +902,12 @@ export default function VideoPanel({
     smartDuration,
     audio,
     watermark,
+    seed,
+    retryOn,
+    retryMax,
+    pinnedChars,
+    suppressedChars,
+    excludedChars,
     genMode,
     items,
     firstFrame,
@@ -791,156 +970,39 @@ export default function VideoPanel({
     return fit.url;
   }
 
-  function patchWorking(
-    list: MediaItem[],
-    id: string,
-    patch: Partial<MediaItem>
-  ) {
-    const idx = list.findIndex((i) => i.id === id);
-    if (idx >= 0) list[idx] = { ...list[idx], ...patch };
-  }
-
-  async function attachRefs(
-    working: MediaItem[],
-    c: Character
-  ): Promise<{ ok: boolean; msg?: string; warnings: string[] }> {
-    const warnings: string[] = [];
-    const currentImages = working.filter(
-      (i) => i.kind === "image" && i.state !== "error"
-    ).length;
-    const slots = MAX_IMAGES - currentImages;
-    if (slots <= 0)
-      return {
-        ok: false,
-        msg: `Image slots full (max ${MAX_IMAGES}) — cannot attach ${c.name}`,
-        warnings,
-      };
-    if (slots < c.imageCount)
-      warnings.push(
-        `Only ${slots} image slot(s) free for ${c.name} — using first ${slots} of ${c.imageCount}`
-      );
-    const attachCount = Math.min(slots, c.imageCount);
-    const audioIdx =
-      working.filter((i) => i.kind === "audio" && i.state !== "error").length + 1;
-
-    const imageItems: MediaItem[] = [];
-    for (let i = 0; i < attachCount; i++) {
-      imageItems.push({
-        id: nextId(),
-        kind: "image",
-        name: `Image ${currentImages + i + 1}`,
-        size: 0,
-        previewUrl: "",
-        state: "uploading",
-        characterId: c.id,
-        characterLookId: activeLook(c).id,
-      });
-    }
-    let audioItem: MediaItem | null = null;
-    if (c.hasAudio && audioIdx <= MAX_AUDIO) {
-      audioItem = {
-        id: nextId(),
-        kind: "audio",
-        name: `Audio ${audioIdx}`,
-        size: 0,
-        previewUrl: "",
-        state: "uploading",
-        characterId: c.id,
-      };
-    }
-    working.push(...imageItems, ...(audioItem ? [audioItem] : []));
-    setItems([...working]);
-
-    for (let i = 0; i < attachCount; i++) {
-      const item = imageItems[i];
-      try {
-        const res = await fetch(charImgUrl(c, i));
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const dataUrl = await blobToDataUrl(await res.blob());
-        patchWorking(working, item.id, {
-          url: dataUrl,
-          previewUrl: dataUrl,
-          state: "ready",
-        });
-      } catch (e) {
-        patchWorking(working, item.id, {
-          state: "error",
-          error: e instanceof Error ? e.message : "load failed",
-        });
-      }
-      setItems([...working]);
-    }
-
-    if (audioItem) {
-      try {
-        const res = await fetch(charAudioUrl(c));
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const raw = await res.blob();
-        const { blob, trimmed, durationSec } = await trimAudioBlob(
-          raw,
-          MAX_AUDIO_SEC
-        );
-        if (trimmed)
-          warnings.push(
-            `${c.name} voice is ${durationSec.toFixed(1)}s — using first ${MAX_AUDIO_SEC}s (API max)`
-          );
-        const previewUrl = URL.createObjectURL(blob);
-        const file = new File([blob], `${c.id}-voice`, {
-          type: blob.type || "audio/wav",
-        });
-        const form = new FormData();
-        form.append("file", file);
-        form.append("model", "wan3.0-video");
-        const up = await fetch("/api/upload", { method: "POST", body: form });
-        const data = await up.json();
-        if (!up.ok) throw new Error(data?.message || `HTTP ${up.status}`);
-        patchWorking(working, audioItem.id, {
-          url: data.url,
-          previewUrl,
-          size: blob.size,
-          state: "ready",
-        });
-      } catch (e) {
-        patchWorking(working, audioItem.id, {
-          state: "error",
-          error: e instanceof Error ? e.message : "voice upload failed",
-        });
-      }
-      setItems([...working]);
-    }
-
-    return { ok: true, warnings };
-  }
-
   type CharRefs = {
-    images: string[];
+    images: (string | null)[];
     audio?: { url: string; previewUrl: string; size: number };
+    at: number;
   };
   const charRefsCache = useRef(new Map<string, CharRefs>());
+  const refsKey = (c: Character, voice: boolean) =>
+    `${c.id}@${charStamp(c)}@${voice ? "a" : ""}`;
 
   async function getCharRefs(
-    c: Character
-  ): Promise<{ refs?: CharRefs; msg?: string; warnings: string[] }> {
-    const key = `${c.id}@${c.updatedAt ?? c.createdAt}@${MAX_AUDIO > 0 ? "a" : ""}`;
+    c: Character,
+    withVoice: boolean
+  ): Promise<{ refs?: CharRefs; warnings: string[] }> {
+    const key = refsKey(c, withVoice);
     const cached = charRefsCache.current.get(key);
-    if (cached) return { refs: cached, warnings: [] };
+    if (cached && (!cached.audio || Date.now() - cached.at < VOICE_TTL_MS))
+      return { refs: cached, warnings: [] };
     const warnings: string[] = [];
-    const images: string[] = [];
+    const images: (string | null)[] = [];
     for (let i = 0; i < c.imageCount; i++) {
       try {
         const res = await fetch(charImgUrl(c, i));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         images.push(await blobToDataUrl(await res.blob()));
       } catch (e) {
+        images.push(null);
         warnings.push(
           `${c.name} image ${i + 1} failed: ${e instanceof Error ? e.message : "load failed"}`
         );
       }
     }
-    if (!images.length)
-      return { msg: `Could not load ${c.name}'s reference images`, warnings };
     let audio: CharRefs["audio"];
-    if (c.hasAudio && MAX_AUDIO > 0) {
+    if (withVoice) {
       try {
         const res = await fetch(charAudioUrl(c));
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -970,79 +1032,243 @@ export default function VideoPanel({
         );
       }
     }
-    const refs: CharRefs = { images, audio };
+    if (!images.some(Boolean) && !audio && c.imageCount > 0) return { warnings };
+    const refs: CharRefs = { images, audio, at: Date.now() };
     charRefsCache.current.set(key, refs);
     return { refs, warnings };
   }
 
-  async function injectCharacter(
-    c: Character,
-    base?: MediaItem[]
-  ): Promise<MediaItem[]> {
-    const start = base ?? itemsRef.current;
-    if (start.some((i) => i.characterId === c.id)) return start;
-    const working = [...start];
-    const r = await attachRefs(working, c);
-    if (!r.ok) {
-      notify(r.msg || `Could not attach ${c.name}`);
-      return working;
+  type CharPlan = { c: Character; stamp: string; indexes: number[]; voice: boolean };
+
+  function charTargets(env: SyncEnv): { targets: Character[]; notes: string[] } {
+    const notes: string[] = [];
+    const named = env.chars
+      .filter((c) => !c.hidden && !env.suppressed.includes(c.id))
+      .map((c) => ({ c, at: nameIndex(env.searchText, c.name) }))
+      .filter((x) => x.at >= 0)
+      .sort((a, b) => a.at - b.at)
+      .map((x) => x.c);
+    const targets = [...named];
+    let missing = 0;
+    for (const id of env.pinned) {
+      if (targets.some((c) => c.id === id) || env.suppressed.includes(id)) continue;
+      const c = env.chars.find((x) => x.id === id);
+      if (!c) missing++;
+      else if (c.hidden)
+        notes.push(
+          `${c.name} is hidden, so the reused references are not attached. Unhide it in Characters to use it.`
+        );
+      else targets.push(c);
     }
-    r.warnings.forEach(notify);
-    notify(
-      `Character "${c.name}" references attached — description is added when you generate`
-    );
-    return working;
+    if (missing && env.charsFor === env.projectId)
+      notes.push(
+        missing === 1
+          ? "A character from the reused video no longer exists, so its references are not attached."
+          : `${missing} characters from the reused video no longer exist, so their references are not attached.`
+      );
+    return { targets, notes };
   }
 
-  async function refreshLooks(list: MediaItem[]): Promise<MediaItem[]> {
-    if (!list.some((i) => i.characterLookId)) return list;
-    let chars: Character[] = [];
-    try {
-      const res = await fetch(
-        `/api/characters?project=${projectId === null ? "none" : projectId}`
+  function planCharacters(
+    list: MediaItem[],
+    targets: Character[],
+    env: SyncEnv
+  ): { plans: CharPlan[]; notes: string[] } {
+    const notes: string[] = [];
+    const plans: CharPlan[] = [];
+    const own = list.filter((i) => !i.characterId && i.state !== "error");
+    let freeImg = env.maxImages - own.filter((i) => i.kind === "image").length;
+    let freeAud = env.maxAudio - own.filter((i) => i.kind === "audio").length;
+    for (const c of targets) {
+      const stamp = charStamp(c);
+      const ex = env.excluded[c.id]?.stamp === stamp ? env.excluded[c.id] : null;
+      const wanted = Array.from({ length: c.imageCount }, (_, i) => i).filter(
+        (i) => !ex?.images.includes(i)
       );
-      const d = await res.json();
-      chars = Array.isArray(d.characters) ? d.characters : [];
-    } catch {
-      return list;
+      if (!env.maxImages) {
+        notes.push(
+          `${c.name} is described in the prompt only: ${env.label} takes no reference images.`
+        );
+        continue;
+      }
+      const n = Math.max(0, Math.min(freeImg, wanted.length));
+      if (wanted.length && !n) {
+        notes.push(
+          `${c.name} is not attached: all ${env.maxImages} image slots are in use. Remove an image to make room.`
+        );
+        continue;
+      }
+      if (n < wanted.length)
+        notes.push(
+          `${c.name}: only ${n} of ${wanted.length} images fit, because ${env.label} takes ${env.maxImages}.`
+        );
+      freeImg -= n;
+      let voice = false;
+      if (c.hasAudio && !env.maxAudio && !ex?.voice)
+        notes.push(`${c.name}'s voice is not attached: ${env.label} takes no reference audio.`);
+      if (c.hasAudio && env.maxAudio > 0 && !ex?.voice) {
+        if (freeAud > 0) {
+          voice = true;
+          freeAud--;
+        } else
+          notes.push(
+            `${c.name}'s voice is not attached: ${env.label} takes ${env.maxAudio} audio clip${env.maxAudio === 1 ? "" : "s"}, already in use.`
+          );
+      }
+      plans.push({ c, stamp, indexes: wanted.slice(0, n), voice });
     }
-    const stale = chars.filter((c) =>
-      list.some(
-        (i) =>
-          i.characterId === c.id &&
-          i.characterLookId &&
-          i.characterLookId !== activeLook(c).id
-      )
+    return { plans, notes };
+  }
+
+  function planIsCurrent(list: MediaItem[], p: CharPlan): boolean {
+    const mine = list.filter((i) => i.characterId === p.c.id);
+    const imgs = mine.filter((i) => i.kind === "image");
+    return (
+      mine.length > 0 &&
+      mine.every((i) => i.characterStamp === p.stamp && i.state === "ready") &&
+      imgs.map((i) => i.characterIndex).join() === p.indexes.join() &&
+      mine.some((i) => i.kind === "audio") === p.voice
     );
-    if (!stale.length) return list;
-    let next = list.filter(
-      (i) => !stale.some((c) => c.id === i.characterId)
-    );
-    setItems(next);
-    for (const c of stale) {
-      next = await injectCharacter(c, next);
-      notify(`${c.name} switched to the "${activeLook(c).name}" look`);
+  }
+
+  function reconcile(
+    cur: MediaItem[],
+    plans: CharPlan[],
+    refsFor: (p: CharPlan) => CharRefs | undefined
+  ): MediaItem[] {
+    const out = cur.filter((i) => !i.characterId);
+    for (const p of plans) {
+      const mine = cur.filter((i) => i.characterId === p.c.id);
+      if (planIsCurrent(cur, p)) {
+        out.push(
+          ...mine.filter((i) => i.kind === "image"),
+          ...mine.filter((i) => i.kind === "audio")
+        );
+        continue;
+      }
+      const refs = refsFor(p);
+      if (!refs) {
+        out.push(...mine);
+        continue;
+      }
+      for (const idx of p.indexes) {
+        const url = refs.images[idx];
+        if (!url) continue;
+        out.push({
+          id: nextId(),
+          kind: "image",
+          name: `${p.c.name} ${idx + 1}`,
+          size: 0,
+          url,
+          previewUrl: url,
+          state: "ready",
+          characterId: p.c.id,
+          characterLookId: activeLook(p.c).id,
+          characterStamp: p.stamp,
+          characterIndex: idx,
+        });
+      }
+      if (p.voice && refs.audio)
+        out.push({
+          id: nextId(),
+          kind: "audio",
+          name: `${p.c.name} voice`,
+          size: refs.audio.size,
+          url: refs.audio.url,
+          previewUrl: refs.audio.previewUrl,
+          state: "ready",
+          characterId: p.c.id,
+          characterLookId: activeLook(p.c).id,
+          characterStamp: p.stamp,
+        });
     }
+    const same = out.length === cur.length && out.every((x, i) => x === cur[i]);
+    return same ? cur : out;
+  }
+
+  const syncChain = useRef<Promise<unknown>>(Promise.resolve());
+
+  async function runCharacterSync(): Promise<MediaItem[]> {
+    const showNotes = (notes: string[]) =>
+      setCharNotes((cur) => (cur.join("\n") === notes.join("\n") ? cur : notes));
+    const env = syncEnv.current;
+    if (env.charsFor !== env.projectId) return itemsRef.current;
+    if (env.frameMode) {
+      const named = charTargets(env).targets.map((c) => c.name);
+      showNotes(
+        named.length
+          ? [
+              `First + last frame mode does not use character references, so ${named.join(", ")} ${named.length === 1 ? "is" : "are"} not attached.`,
+            ]
+          : []
+      );
+      return itemsRef.current;
+    }
+    const draft = planCharacters(itemsRef.current, charTargets(env).targets, env);
+    for (const p of draft.plans) {
+      if (planIsCurrent(itemsRef.current, p)) continue;
+      const { refs, warnings } = await getCharRefs(p.c, p.voice);
+      warnings.forEach(notify);
+      if (!refs) notify(`Could not load ${p.c.name}'s references`);
+    }
+    const now = syncEnv.current;
+    if (now.frameMode) return itemsRef.current;
+    const { targets, notes: targetNotes } = charTargets(now);
+    const { plans, notes } = planCharacters(itemsRef.current, targets, now);
+    const next = reconcile(itemsRef.current, plans, (p) =>
+      charRefsCache.current.get(refsKey(p.c, p.voice))
+    );
+    if (next !== itemsRef.current) {
+      itemsRef.current = next;
+      setItems(next);
+    }
+    showNotes([...targetNotes, ...notes]);
     return next;
   }
 
-  async function findDeferredCharacters(text: string): Promise<Character[]> {
-    let chars: Character[] = [];
-    try {
-      const res = await fetch(
-        `/api/characters?project=${projectId === null ? "none" : projectId}`
-      );
-      const d = await res.json();
-      chars = Array.isArray(d.characters) ? d.characters : [];
-    } catch {
-      chars = [];
-    }
-    return chars.filter(
-      (c) =>
-        !c.hidden &&
-        new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text) &&
-        !itemsRef.current.some((i) => i.characterId === c.id)
-    );
+  function syncCharacters(): Promise<MediaItem[]> {
+    const run = syncChain.current.then(runCharacterSync, runCharacterSync);
+    syncChain.current = run.catch(() => undefined);
+    return run;
+  }
+
+  async function syncCharactersNow(): Promise<MediaItem[]> {
+    await loadCharacters();
+    await new Promise((r) => requestAnimationFrame(r));
+    return syncCharacters();
+  }
+
+  const syncRef = useRef(syncCharacters);
+  useEffect(() => {
+    syncRef.current = syncCharacters;
+  });
+  const charSyncKey = [
+    searchText,
+    chars.map((c) => `${c.id}:${c.name}:${c.hidden ? 1 : 0}:${charStamp(c)}`).join("|"),
+    pinnedChars.join(),
+    suppressedChars.join(),
+    JSON.stringify(excludedChars),
+    frameMode,
+    MAX_IMAGES,
+    MAX_AUDIO,
+    items
+      .map((i) => `${i.id}:${i.kind}:${i.state}:${i.characterId ?? ""}`)
+      .join("|"),
+  ].join("\u0000");
+  useEffect(() => {
+    const t = window.setTimeout(() => void syncRef.current(), 300);
+    return () => window.clearTimeout(t);
+  }, [charSyncKey]);
+
+  function pickCharacter(c: Character, via: "menu" | "typed") {
+    if (via !== "menu") return;
+    setSuppressedChars((s) => (s.includes(c.id) ? s.filter((x) => x !== c.id) : s));
+    setExcludedChars((ex) => {
+      if (!ex[c.id]) return ex;
+      const next = { ...ex };
+      delete next[c.id];
+      return next;
+    });
   }
 
   function updateItem(id: string, patch: Partial<MediaItem>) {
@@ -1050,20 +1276,48 @@ export default function VideoPanel({
   }
 
   function removeItem(id: string) {
+    const item = itemsRef.current.find((i) => i.id === id);
+    const cid = item?.characterId;
+    if (item && cid) {
+      const rest = itemsRef.current.filter((i) => i.characterId === cid && i.id !== id);
+      if (!rest.length) {
+        setSuppressedChars((s) => (s.includes(cid) ? s : [...s, cid]));
+        setPinnedChars((s) => s.filter((x) => x !== cid));
+        setExcludedChars((ex) => {
+          if (!ex[cid]) return ex;
+          const next = { ...ex };
+          delete next[cid];
+          return next;
+        });
+      } else {
+        const stamp = item.characterStamp ?? "";
+        setExcludedChars((ex) => {
+          const prev = ex[cid]?.stamp === stamp ? ex[cid] : { stamp, images: [], voice: false };
+          return {
+            ...ex,
+            [cid]:
+              item.kind === "audio"
+                ? { ...prev, voice: true }
+                : { ...prev, images: [...prev.images, item.characterIndex ?? -1] },
+          };
+        });
+      }
+    }
     setItems((list) => {
-      const item = list.find((i) => i.id === id);
-      if (item?.previewUrl.startsWith("blob:")) URL.revokeObjectURL(item.previewUrl);
+      const it = list.find((i) => i.id === id);
+      if (it && !it.characterId && it.previewUrl.startsWith("blob:"))
+        URL.revokeObjectURL(it.previewUrl);
       return list.filter((i) => i.id !== id);
     });
   }
 
   async function handleFiles(files: File[]) {
     const errs: string[] = [];
-    let imgCount = images.length;
+    let imgCount = images.filter((i) => !i.characterId).length;
     let vidCount = videos.length;
     let vidSec = totalVideoSec;
     let audCount = items.filter(
-      (i) => i.kind === "audio" && i.state !== "error"
+      (i) => i.kind === "audio" && i.state !== "error" && !i.characterId
     ).length;
 
     for (const file of files) {
@@ -1238,14 +1492,17 @@ export default function VideoPanel({
   function mediaMentions(): MediaMention[] {
     const out: MediaMention[] = [];
     let n = 0;
-    for (const it of items)
-      if (it.kind === "image" && it.state === "ready")
+    for (const it of items) {
+      if (it.kind !== "image" || it.state !== "ready") continue;
+      n++;
+      if (!it.characterId)
         out.push({
-          token: `@Image ${++n}`,
+          token: `@Image ${n}`,
           label: `Image ${n}`,
           sub: "reference image",
           thumb: it.previewUrl || undefined,
         });
+    }
     n = 0;
     for (const it of items)
       if (it.kind === "video" && it.state === "ready")
@@ -1256,9 +1513,12 @@ export default function VideoPanel({
           thumb: it.previewUrl || undefined,
         });
     n = 0;
-    for (const it of items)
-      if (it.kind === "audio" && it.state === "ready")
-        out.push({ token: `@Audio ${++n}`, label: `Audio ${n}`, sub: "reference audio" });
+    for (const it of items) {
+      if (it.kind !== "audio" || it.state !== "ready") continue;
+      n++;
+      if (!it.characterId)
+        out.push({ token: `@Audio ${n}`, label: `Audio ${n}`, sub: "reference audio" });
+    }
     return out;
   }
 
@@ -1416,9 +1676,7 @@ export default function VideoPanel({
     }
     setRewriting(true);
     try {
-      let list = await refreshLooks(itemsRef.current);
-      for (const c of await findDeferredCharacters(text))
-        list = await injectCharacter(c, list);
+      const list = await syncCharactersNow();
       const inventory = await buildInventory(list);
       const res = await fetch("/api/rewrite-prompt", {
         method: "POST",
@@ -1466,6 +1724,20 @@ export default function VideoPanel({
     }
     const effectiveModel = model;
     const sendAudio = policy.audio && audio;
+    const typedSeed = policy.seed && seed.trim() ? Number(seed) : undefined;
+    if (typedSeed !== undefined && (!Number.isInteger(typedSeed) || typedSeed < 0 || typedSeed > MAX_SEED)) {
+      notify(`Seed must be an integer in [0, ${MAX_SEED}]`);
+      return;
+    }
+    const retrying = policy.seed && retryOn;
+    const maxTries = retrying && retryMax.trim() ? Number(retryMax) : undefined;
+    if (maxTries !== undefined && (!Number.isInteger(maxTries) || maxTries < 1 || maxTries > 10000)) {
+      notify("Max attempts must be a whole number from 1 to 10000, or empty for no limit");
+      return;
+    }
+    const seedNum =
+      typedSeed ?? (retrying ? Math.floor(Date.now() / 1000) % (MAX_SEED + 1) : undefined);
+    const retryFields = retrying ? { retry: true, retryMax: maxTries } : {};
     if (frameMode) {
       const ff = firstFrame?.state === "ready" && firstFrame.url ? firstFrame : null;
       const lf =
@@ -1511,6 +1783,8 @@ export default function VideoPanel({
           duration,
           audio: sendAudio,
           watermark,
+          seed: seedNum,
+          ...retryFields,
           media,
         });
       } finally {
@@ -1553,7 +1827,7 @@ export default function VideoPanel({
     }
     setPreparing(true);
     try {
-      const working = [...(await refreshLooks(itemsRef.current))];
+      const working = [...(await syncCharactersNow())];
       if (
         useRewritten &&
         rewriteSig &&
@@ -1564,103 +1838,24 @@ export default function VideoPanel({
         );
       let finalPrompt = sourceText;
       const searchText = useRewritten ? `${prompt}\n${rewrote}` : prompt;
-      const newlyAttached: Character[] = [];
-      let chars: Character[] = [];
-      try {
-        const res = await fetch(
-          `/api/characters?project=${projectId === null ? "none" : projectId}`
-        );
-        const d = await res.json();
-        chars = Array.isArray(d.characters) ? d.characters : [];
-      } catch {
-        chars = [];
-      }
-      const mentioned = chars.filter(
-        (c) =>
-          !c.hidden &&
-          new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(searchText)
-      );
-      const attachedIds = new Set(
-        working
-          .map((i) => i.characterId)
-          .filter((x): x is string => Boolean(x))
-      );
+      const env = syncEnv.current;
+      const firstAt = (c: Character) => working.findIndex((i) => i.characterId === c.id);
+      const attached = env.chars
+        .filter((c) => firstAt(c) >= 0)
+        .sort((a, b) => firstAt(a) - firstAt(b));
+      const describedOnly = charTargets(env).targets;
       const targets = [
-        ...mentioned,
-        ...chars.filter(
-          (c) =>
-            attachedIds.has(c.id) && !mentioned.some((m) => m.id === c.id)
-        ),
-      ];
-      for (const c of targets) {
-        if (working.some((i) => i.characterId === c.id)) continue;
-        const { refs, msg, warnings } = await getCharRefs(c);
-        warnings.forEach(notify);
-        if (!refs) {
-          notify(msg || `Could not load ${c.name} references`);
-          return;
-        }
-        const usedImgs = working.filter(
-          (i) => i.kind === "image" && i.state !== "error"
-        ).length;
-        const n = Math.min(MAX_IMAGES - usedImgs, refs.images.length);
-        if (MAX_IMAGES === 0) {
-          notify(
-            `${entry.label} takes no reference images — ${c.name} is described in the prompt only`
-          );
-          newlyAttached.push(c);
-          continue;
-        }
-        if (n <= 0) {
-          notify(
-            `Image slots full (max ${MAX_IMAGES}) — cannot add ${c.name} references`
-          );
-          return;
-        }
-        if (n < refs.images.length)
-          notify(
-            `Only ${n} image slot(s) free — using first ${n} of ${refs.images.length} for ${c.name}`
-          );
-        const audUsed = working.filter(
-          (i) => i.kind === "audio" && i.state !== "error"
-        ).length;
-        for (let i = 0; i < n; i++)
-          working.push({
-            id: nextId(),
-            kind: "image",
-            name: `Image ${usedImgs + i + 1}`,
-            size: 0,
-            url: refs.images[i],
-            previewUrl: refs.images[i],
-            state: "ready",
-            characterId: c.id,
-            characterLookId: activeLook(c).id,
-          });
-        if (refs.audio && audUsed < MAX_AUDIO)
-          working.push({
-            id: nextId(),
-            kind: "audio",
-            name: `Audio ${audUsed + 1}`,
-            size: refs.audio.size,
-            url: refs.audio.url,
-            previewUrl: refs.audio.previewUrl,
-            state: "ready",
-            characterId: c.id,
-          });
-        newlyAttached.push(c);
-      }
+        ...attached,
+        ...describedOnly.filter((c) => !attached.some((a) => a.id === c.id)),
+      ].filter((c) => !searchText.includes(`${c.name}:`));
       if (useRewritten) {
-        const extra = newlyAttached
-          .filter((c) => !searchText.includes(`${c.name}:`))
+        const extra = targets
+          .filter((c) => nameIndex(rewrote, c.name) < 0)
           .map((c) => bindingLineFrom(working, c));
         if (extra.length)
           finalPrompt = `${sourceText}\n\n${extra.join("")}`.trim();
       } else {
-        const lines: string[] = [];
-        for (const c of targets) {
-          if (searchText.includes(`${c.name}:`)) continue;
-          lines.push(bindingLineFrom(working, c));
-        }
+        const lines = targets.map((c) => bindingLineFrom(working, c));
         finalPrompt = lines.length ? lines.join("") + sourceText : sourceText;
       }
       if (tooLong(finalPrompt)) return;
@@ -1697,6 +1892,8 @@ export default function VideoPanel({
         duration: smartOn ? -1 : duration,
         audio: sendAudio,
         watermark,
+        seed: seedNum,
+        ...retryFields,
         media,
       });
     } finally {
@@ -1804,6 +2001,7 @@ export default function VideoPanel({
               projectId={projectId}
               getMediaMentions={mediaMentions}
               mediaSignature={mentionSig}
+              onPickCharacter={pickCharacter}
               chipCharacters
               placeholder='Describe the video. Type "@" to reference Image N / Video N / Audio N or a saved character…'
             />
@@ -1902,6 +2100,15 @@ export default function VideoPanel({
           </div>
         )}
 
+        {charNotes.length > 0 && (
+          <div className="mb-3 space-y-1" aria-live="polite">
+            {charNotes.map((n) => (
+              <p key={n} className="text-xs text-warn">
+                {n}
+              </p>
+            ))}
+          </div>
+        )}
         {frameMode ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {(hasLastFrame ? (["first", "last"] as const) : (["first"] as const)).map((slot) => {
@@ -2000,10 +2207,21 @@ export default function VideoPanel({
 
             {items.length > 0 && (
               <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {items.map((item) => (
+                {items.map((item) => {
+                  const owner = item.characterId
+                    ? chars.find((c) => c.id === item.characterId)?.name ?? "a character"
+                    : null;
+                  return (
                   <div
                     key={item.id}
-                    className="relative border border-line rounded-md overflow-hidden bg-panel2 group"
+                    title={
+                      owner
+                        ? `Sent with ${owner} when you generate. Mention ${owner} by name to use it; it is not offered in @ mentions.`
+                        : undefined
+                    }
+                    className={`relative border rounded-md overflow-hidden bg-panel2 group ${
+                      owner ? "border-dashed border-line" : "border-line"
+                    }`}
                   >
                     <div className="aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
                       {item.kind === "audio" ? (
@@ -2026,13 +2244,20 @@ export default function VideoPanel({
                           <img
                             src={item.previewUrl}
                             alt={item.name}
-                            className="w-full h-full object-cover"
+                            className={`w-full h-full object-cover ${
+                              owner ? "saturate-[.35] brightness-75" : ""
+                            }`}
                           />
                         )
                       ) : (
                         <span className="text-muted text-xs font-mono">…</span>
                       )}
                     </div>
+                    {owner && item.kind !== "audio" && (
+                      <span className="absolute top-1.5 left-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-black/70 backdrop-blur-sm px-2 py-0.5 text-2xs font-medium text-ink">
+                        {owner}
+                      </span>
+                    )}
                     <div className="px-2 py-1.5">
                       <p className="text-2xs truncate" title={item.name}>
                         {item.state === "ready" && item.kind === "image"
@@ -2044,12 +2269,14 @@ export default function VideoPanel({
                               : item.kind}{" "}
                         · {item.name}
                       </p>
-                      <p className="text-2xs font-mono text-muted">
+                      <p className={`text-2xs text-muted truncate ${owner ? "" : "font-mono"}`}>
                         {item.state === "uploading" && "uploading…"}
                         {item.state === "ready" &&
-                          `${item.size ? formatBytes(item.size) : "attached"}${
-                            item.durationSec ? ` · ${item.durationSec.toFixed(1)}s` : ""
-                          }`}
+                          (owner
+                            ? `Sent with ${owner}`
+                            : `${item.size ? formatBytes(item.size) : "attached"}${
+                                item.durationSec ? ` · ${item.durationSec.toFixed(1)}s` : ""
+                              }`)}
                         {item.state === "error" && (
                           <span className="text-danger">{item.error}</span>
                         )}
@@ -2070,7 +2297,8 @@ export default function VideoPanel({
                       ✕
                     </button>
                   </div>
-                ))}
+                  );
+                })}
                 <AddTile
                   accept={acceptFor(MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO)}
                   onFiles={handleFiles}
@@ -2193,6 +2421,49 @@ export default function VideoPanel({
               )}
             </div>
           </Field>
+          {policy.seed && (
+            <Field label="Seed" hint="Optional">
+              <TextInput
+                value={seed}
+                onChange={(e) => setSeed(e.target.value)}
+                placeholder={retryOn ? "from the current time" : "random"}
+                inputMode="numeric"
+              />
+            </Field>
+          )}
+          {policy.seed && (
+            <div role="group" aria-label="Retry on fail">
+              <div className="flex items-baseline justify-between gap-3 mb-2">
+                <span className="text-xs font-medium text-ink/80">Retry on fail</span>
+                {retryOn && <span className="text-2xs text-muted">next seed each try</span>}
+              </div>
+              <div className="flex items-center gap-3 min-h-9">
+                <Toggle checked={retryOn} onChange={setRetryOn} label="Retry" />
+                {retryOn && (
+                  <div className="flex items-center gap-2 flex-1 min-w-0 text-xs text-muted">
+                    <span className="shrink-0">Max attempts</span>
+                    <TextInput
+                    value={retryMax}
+                    onChange={(e) => setRetryMax(e.target.value)}
+                    placeholder="no limit"
+                    inputMode="numeric"
+                    aria-label="Max attempts"
+                    title="Leave empty to keep trying until one succeeds or you stop it from the card."
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+          {policy.seed && retryOn && (
+            <p className="sm:col-span-2 -mt-2 text-2xs text-muted leading-snug">
+              If the video fails, it is sent again with seed +1, until one
+              succeeds{retryMax.trim() ? ` or ${retryMax.trim()} attempts have run` : ""}. Leave
+              Max attempts empty for no limit. Every attempt and its seed show on
+              the card, with a Stop retrying button. Retries only continue while
+              GenForge is open in a tab.
+            </p>
+          )}
           {policy.audio && (
             <div className="sm:col-span-2 flex flex-wrap gap-x-6 gap-y-3">
               <Toggle checked={audio} onChange={setAudio} label="Audio" />

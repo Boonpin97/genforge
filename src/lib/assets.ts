@@ -3,7 +3,7 @@ import path from "path";
 import { randomUUID } from "crypto";
 import { archiveDeletedAssets } from "./spend";
 import { readJsonArray, withFileLock, writeJsonAtomic } from "./json-file";
-import type { AssetRefMeta, PollProvider, StoredAsset } from "./types";
+import type { AssetRefMeta, PollProvider, RetryInfo, StoredAsset } from "./types";
 
 const DATA_DIR = path.join(process.cwd(), "data", "assets");
 const INDEX_FILE = path.join(DATA_DIR, "index.json");
@@ -254,6 +254,7 @@ export async function createAsset(
     refs,
     projectId: meta.projectId ?? null,
     copiedFrom: meta.copiedFrom,
+    retry: meta.retry,
   };
 
   return locked(async () => {
@@ -334,6 +335,30 @@ export async function failAsset(
     list[pos] = { ...list[pos], status: "failed", error: error.slice(0, 300) };
     await writeIndex(list);
     return list[pos];
+  });
+}
+
+export function assetDir(id: string): string | null {
+  return ID_RE.test(id) ? path.join(DATA_DIR, id) : null;
+}
+
+export function setAssetRetry(
+  id: string,
+  patch: { retry: RetryInfo; taskId?: string; seed?: number }
+): Promise<StoredAsset | null> {
+  if (!ID_RE.test(id)) return Promise.resolve(null);
+  return locked(async () => {
+    const list = await readIndex();
+    const asset = list.find((a) => a.id === id);
+    if (!asset) return null;
+    asset.retry = patch.retry;
+    if (patch.taskId && !asset.results.length) asset.taskId = patch.taskId;
+    if (typeof patch.seed === "number") {
+      asset.settings = { ...asset.settings, seed: patch.seed };
+      if (asset.params) asset.params = { ...asset.params, seed: patch.seed };
+    }
+    await writeIndex(list);
+    return asset;
   });
 }
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearAssets, createAsset, listAssets } from "@/lib/assets";
+import { stopBeforeDelete } from "@/lib/video-retry";
 import { parseProjectParam } from "@/lib/projects";
 import type { AssetRefMeta, StoredAsset } from "@/lib/types";
 
@@ -89,6 +90,8 @@ export async function POST(req: NextRequest) {
 }
 
 export async function DELETE() {
+  const pending = (await listAssets()).filter((x) => x.status === "pending");
+  await Promise.all(pending.map((x) => stopBeforeDelete(x).catch(() => {})));
   const removed = await clearAssets();
   return NextResponse.json({ ok: true, removed });
 }

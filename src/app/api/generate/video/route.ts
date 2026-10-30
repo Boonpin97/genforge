@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  extractError,
-  getVideoProvider,
-  hasOssMedia,
-  videoService,
-  type DashService,
-} from "@/lib/dashscope";
+import { getVideoProvider, hasOssMedia, type DashService } from "@/lib/dashscope";
 import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { requireModel } from "@/lib/config";
 import { checkVideo } from "@/lib/policy-check";
 import { upstreamModelId } from "@/lib/model-catalog";
 import type { MediaPayload, MediaType } from "@/lib/types";
+import { retryRequest, sendVideo } from "@/lib/video-retry";
 
 export const maxDuration = 60;
 
@@ -33,6 +28,7 @@ type Body = {
   promptExtend?: boolean;
   watermark?: boolean;
   seed?: number;
+  retry?: { id?: string; max?: number | null };
 };
 
 export async function POST(req: NextRequest) {
@@ -121,34 +117,22 @@ export async function POST(req: NextRequest) {
       headers["X-DashScope-OssResourceResolve"] = "enable";
     }
 
-    const res = await videoService(
-      provider,
-      "/api/v1/services/aigc/video-generation/video-synthesis",
-      {
-        method: "POST",
-        headers,
-        json: { model, input, parameters },
-      }
-    );
-
-    const out = res.body as {
-      code?: string;
-      output?: { task_id?: string; task_status?: string };
-      request_id?: string;
+    const request = {
+      service: provider,
+      path: "/api/v1/services/aigc/video-generation/video-synthesis",
+      headers,
+      json: { model, input, parameters },
     };
+    const sent = await sendVideo(request);
+    if (!sent.ok) return NextResponse.json(sent.error, { status: sent.status });
 
-    if (res.status !== 200 || out.code || !out.output?.task_id) {
-      const err = extractError(res.body);
-      return NextResponse.json(err, {
-        status: res.status >= 400 ? res.status : 502,
-      });
-    }
-
+    const retry = await retryRequest(body.retry, parameters.seed, request, sent.taskId);
     return NextResponse.json({
-      taskId: out.output.task_id,
-      status: out.output.task_status || "PENDING",
-      requestId: out.request_id || null,
+      taskId: sent.taskId,
+      status: sent.status,
+      requestId: sent.requestId,
       provider,
+      retry,
     });
   } catch (err) {
     if (err instanceof ApiErrorLike) {

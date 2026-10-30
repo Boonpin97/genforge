@@ -9,7 +9,7 @@ import {
 } from "./asset-file-cache";
 import { formatSGD } from "@/lib/pricing";
 import { setVideoVolume, subscribePrefs, videoVolume } from "@/lib/notify";
-import type { ImageUsage, TaskRecord, VideoUsage } from "@/lib/types";
+import type { ImageUsage, RetryAttempt, TaskRecord, VideoUsage } from "@/lib/types";
 
 const PREVIEWABLE = /^(\/|data:|blob:|https?:)/i;
 
@@ -515,14 +515,94 @@ function Usage({ task }: { task: TaskRecord }) {
   );
 }
 
+const ATTEMPT_LABEL: Record<RetryAttempt["status"], { text: string; tone: string }> = {
+  running: { text: "Rendering", tone: "text-warn" },
+  failed: { text: "Failed", tone: "text-danger" },
+  succeeded: { text: "Succeeded", tone: "text-ok" },
+  cancelled: { text: "Cancelled", tone: "text-muted" },
+};
+
+function RetryLog({
+  task,
+  onStop,
+}: {
+  task: TaskRecord;
+  onStop?: (task: TaskRecord) => Promise<void>;
+}) {
+  const [stopping, setStopping] = useState(false);
+  const retry = task.retry!;
+  const n = retry.attempts.length;
+  const current = retry.attempts[n - 1];
+  const active = task.status === "queued" || task.status === "running";
+  const winner = retry.attempts.find((a) => a.status === "succeeded");
+  const limit = retry.max ? `of ${retry.max}` : "with no limit";
+  const summary = winner
+    ? `Succeeded on attempt ${retry.attempts.indexOf(winner) + 1} with seed ${winner.seed}.`
+    : active && retry.stopped
+      ? `Stopped. No new attempts will start. Attempt ${n} is already rendering; if it succeeds, the video is kept.`
+      : active
+        ? `Attempt ${n} ${limit}. Each failure starts the next seed.`
+        : `Ended after ${n} attempt${n === 1 ? "" : "s"}.`;
+  const canStop = active && !retry.stopped && !retry.done && Boolean(onStop);
+
+  return (
+    <div className="rounded-md border border-line bg-panel2 p-3 space-y-2">
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-xs font-medium text-ink">Auto-retry</span>
+        <span className="text-xs text-muted flex-1 min-w-0">{summary}</span>
+        {canStop && (
+          <Btn
+            variant="danger"
+            size="sm"
+            disabled={stopping}
+            title="Start no more attempts, and cancel the current one if it has not started rendering"
+            onClick={async () => {
+              setStopping(true);
+              try {
+                await onStop!(task);
+              } finally {
+                setStopping(false);
+              }
+            }}
+          >
+            {stopping ? "Stopping…" : "Stop retrying"}
+          </Btn>
+        )}
+      </div>
+      <ol className="max-h-48 overflow-y-auto space-y-1">
+        {retry.attempts.map((a, i) => {
+          const label = ATTEMPT_LABEL[a.status];
+          return (
+            <li
+              key={`${a.seed}-${i}`}
+              className={`grid grid-cols-[2.5rem_7.5rem_5.5rem_1fr] gap-2 items-baseline text-2xs ${
+                a === current && active ? "text-ink" : "text-muted"
+              }`}
+            >
+              <span className="font-mono">#{i + 1}</span>
+              <span className="font-mono">seed {a.seed}</span>
+              <span className={label.tone}>{label.text}</span>
+              <span className="truncate" title={a.error}>
+                {a.error || ""}
+              </span>
+            </li>
+          );
+        })}
+      </ol>
+    </div>
+  );
+}
+
 export default function TaskCard({
   task,
   onReuse,
+  onStopRetry,
   projectId,
   onUploaded,
 }: {
   task: TaskRecord;
   onReuse?: (task: TaskRecord) => void;
+  onStopRetry?: (task: TaskRecord) => Promise<void>;
   projectId?: string | null;
   onUploaded?: () => void;
 }) {
@@ -701,6 +781,8 @@ export default function TaskCard({
             </span>
           </div>
         )}
+
+        {task.retry && <RetryLog task={task} onStop={onStopRetry} />}
 
         {task.error && (
           <ErrorBox

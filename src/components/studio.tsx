@@ -34,6 +34,7 @@ import type {
   ImageSettings,
   MediaPayload,
   PollProvider,
+  RetryInfo,
   StoredAsset,
   TaskRecord,
   VideoSettings,
@@ -76,6 +77,7 @@ function assetToTask(a: StoredAsset): TaskRecord {
     params: a.params,
     hidden: a.hidden,
     pinned: a.pinned,
+    retry: a.retry,
   };
   if (a.kind === "video") {
     const settings: VideoSettings = {
@@ -134,6 +136,7 @@ type SubmitJson = {
   images?: unknown;
   usage?: TaskRecord["usage"];
   estimate?: number | null;
+  retry?: RetryInfo | null;
 };
 
 function apiError(data: unknown, status: number): ApiError {
@@ -176,6 +179,7 @@ export default function Studio({
   const [videoReuse, setVideoReuse] = useState<{
     settings: VideoSettings;
     nonce: number;
+    characterIds?: string[];
   } | null>(null);
   const [imageReuse, setImageReuse] = useState<{
     settings: ImageSettings;
@@ -353,7 +357,11 @@ export default function Studio({
     }
     const nonce = Date.now();
     if (s.kind === "video") {
-      setVideoReuse({ settings: s, nonce });
+      const characterIds =
+        orig.kind === "video"
+          ? [...new Set(orig.media.map((m) => m.characterId).filter((x): x is string => Boolean(x)))]
+          : [];
+      setVideoReuse({ settings: s, nonce, characterIds });
       setTab("video");
     } else {
       setImageReuse({ settings: s, nonce });
@@ -498,6 +506,9 @@ export default function Studio({
             duration: s.duration,
             audio: s.audio,
             watermark: s.watermark,
+            seed: s.seed,
+            retry: s.retry,
+            retryMax: s.retryMax,
             rewrotePrompt: s.rewrotePrompt,
             promptTab: s.promptTab,
           };
@@ -571,6 +582,7 @@ export default function Studio({
             taskId: task.taskId,
             requestId: task.requestId,
             pollProvider: task.pollProvider,
+            retry: task.retry,
             usage: task.usage,
             estimate: task.estimate,
             params: task.params,
@@ -664,6 +676,49 @@ export default function Studio({
           requestId: data.requestId || task.requestId,
           error: data.error || (data.status === "failed" ? { code: "Failed", message: "Task failed" } : undefined),
         };
+        if (patch.status === "failed" && task.retry && !task.retry.done) {
+          const step = await fetch(`/api/assets/${task.id}/retry`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "failed", taskId: task.taskId, error: patch.error }),
+          })
+            .then((r) => r.json())
+            .catch(() => null);
+          if (step?.state === "next") {
+            updateTask(task.id, {
+              status: "queued",
+              taskId: step.taskId,
+              error: undefined,
+              retry: step.retry,
+              settings:
+                task.settings?.kind === "video"
+                  ? { ...task.settings, seed: step.seed }
+                  : task.settings,
+              params: { ...task.params, seed: step.seed },
+            });
+            return;
+          }
+          if (step?.state === "busy" || !step) {
+            if (step?.retry) updateTask(task.id, { retry: step.retry });
+            return;
+          }
+          if (step.state === "done") {
+            patch.retry = step.retry;
+            patch.error = step.error || patch.error;
+          }
+        }
+        if (patch.status === "succeeded" && task.retry && !task.retry.done) {
+          void fetch(`/api/assets/${task.id}/retry`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "succeeded", taskId: task.taskId }),
+          })
+            .then((r) => r.json())
+            .then((out) => {
+              if (out?.retry) updateTask(task.id, { retry: out.retry });
+            })
+            .catch(() => {});
+        }
         updateTask(task.id, patch);
         if (
           (patch.status === "succeeded" || patch.status === "failed") &&
@@ -767,8 +822,13 @@ export default function Studio({
           audio: payload.audio,
           refs: payload.media.length,
           rewrite: payload.promptTab === "rewritten",
+          ...(typeof payload.seed === "number" ? { seed: payload.seed } : {}),
         },
       };
+      const retry =
+        payload.retry && typeof payload.seed === "number"
+          ? { id, max: payload.retryMax ?? null }
+          : undefined;
       setTasks((list) => [record, ...list]);
       try {
         const isOR = payload.model.includes("/");
@@ -791,6 +851,8 @@ export default function Studio({
                     ratio: payload.ratio,
                     resolution: payload.resolution,
                     audio: payload.audio,
+                    seed: payload.seed,
+                    retry,
                   }
                 : {
                     prompt: payload.prompt,
@@ -800,6 +862,8 @@ export default function Studio({
                     duration: payload.duration,
                     audio: payload.audio,
                     watermark: payload.watermark,
+                    seed: payload.seed,
+                    retry,
                     media: payload.media.map(({ type, url, durationSec }) => ({
                       type,
                       url,
@@ -835,8 +899,14 @@ export default function Studio({
           taskId: data.taskId,
           requestId: data.requestId || undefined,
           pollProvider,
+          retry: data.retry || undefined,
         });
-        const created = { ...record, taskId: data.taskId as string, pollProvider };
+        const created = {
+          ...record,
+          taskId: data.taskId as string,
+          pollProvider,
+          retry: data.retry || undefined,
+        };
         void persistAsset(created, { pending: true }).then((saved) =>
           setTimeout(
             () => void pollTask(saved ? { ...created, assetId: id } : created),
@@ -1019,6 +1089,32 @@ export default function Studio({
     }).catch(() => {});
   }, []);
 
+  const stopRetry = useCallback(
+    async (task: TaskRecord) => {
+      const out = await fetch(`/api/assets/${task.id}/retry`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "stop" }),
+      })
+        .then((r) => r.json())
+        .catch(() => null);
+      if (out?.state !== "stopped") {
+        setBanner("Could not stop the retries. Try again.");
+        return;
+      }
+      const patch: Partial<TaskRecord> = { retry: out.retry };
+      if (out.cancelled) {
+        patch.status = "failed";
+        patch.error = out.error;
+      }
+      updateTask(task.id, patch);
+      setAssets((list) =>
+        list.map((a) => (a.id === task.id ? { ...a, ...patch } : a))
+      );
+    },
+    [updateTask]
+  );
+
   const removeAsset = useCallback((task: TaskRecord) => {
     setTasks((l) => l.filter((t) => t.id !== task.id));
     setAssets((l) => l.filter((t) => t.id !== task.id));
@@ -1165,6 +1261,7 @@ export default function Studio({
               reuse={videoReuse}
               projectId={projectId}
               models={videoModels}
+              active={tab === "video"}
             />
           </div>
           <div className={tab === "image" ? "block" : "hidden"}>
@@ -1294,6 +1391,7 @@ export default function Studio({
                     onDelete={removeAsset}
                     onToggleHidden={toggleHidden}
                     onTogglePinned={togglePinned}
+                    onStopRetry={stopRetry}
                     projectId={projectId}
                     onChanged={loadAssets}
                     onUploaded={() => {

@@ -119,6 +119,9 @@ export type VideoSettings = {
   duration: number;
   audio: boolean;
   watermark: boolean;
+  seed?: number;
+  retry?: boolean;
+  retryMax?: number;
   media: MediaPayload[];
 };
 
@@ -234,6 +237,21 @@ export type AssetRefMeta = {
 
 export type PollProvider = "dashscope" | "qwencloud" | "tokenplan" | "openrouter";
 
+export type RetryAttempt = {
+  seed: number;
+  taskId?: string;
+  status: "running" | "failed" | "succeeded" | "cancelled";
+  error?: string;
+  at: number;
+};
+
+export type RetryInfo = {
+  max: number | null;
+  stopped: boolean;
+  done: boolean;
+  attempts: RetryAttempt[];
+};
+
 export type StoredAsset = {
   id: string;
   kind: "video" | "image";
@@ -256,6 +274,7 @@ export type StoredAsset = {
   hidden?: boolean;
   pinned?: boolean;
   used?: boolean;
+  retry?: RetryInfo;
 };
 
 export type TaskRecord = {
@@ -278,6 +297,7 @@ export type TaskRecord = {
   estimate?: number | null;
   params?: Record<string, string | number | boolean>;
   settings?: AssetSettings;
+  retry?: RetryInfo;
 };
 
 export type TaskPollResponse = {
