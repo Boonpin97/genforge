@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { clearAssets, createAsset, listAssets } from "@/lib/assets";
 import { stopBeforeDelete } from "@/lib/video-retry";
+import { expireStaleImageJobs } from "@/lib/image-jobs";
 import { parseProjectParam } from "@/lib/projects";
 import type { AssetRefMeta, StoredAsset } from "@/lib/types";
 
@@ -15,6 +16,7 @@ const REF_FIELD = /^ref-(\d+)$/;
 
 export async function GET(req: NextRequest) {
   const project = parseProjectParam(req.nextUrl.searchParams.get("project"));
+  await expireStaleImageJobs();
   return NextResponse.json({ assets: await listAssets(project) });
 }
 

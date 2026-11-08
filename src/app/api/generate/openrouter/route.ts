@@ -1,6 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractError, friendlyError } from "@/lib/dashscope";
-import { ApiErrorLike, errorStatus } from "@/lib/errors";
+import { ApiErrorLike } from "@/lib/errors";
+import {
+  errorResult,
+  resultResponse,
+  startImageJob,
+  type ImageRunResult,
+} from "@/lib/image-jobs";
 import { openrouter } from "@/lib/openrouter";
 import { requireModel } from "@/lib/config";
 import { checkImage } from "@/lib/policy-check";
@@ -35,6 +41,7 @@ type Body = {
   size?: string;
   n?: number;
   negativePrompt?: string;
+  assetId?: string;
 };
 
 export async function POST(req: NextRequest) {
@@ -64,6 +71,7 @@ export async function POST(req: NextRequest) {
     : prompt;
   const aspect = aspectFor(body.size);
 
+  let run: () => Promise<ImageRunResult>;
   try {
     const entry = await requireModel(body.model, "image");
     if (entry.provider !== "openrouter")
@@ -76,115 +84,117 @@ export async function POST(req: NextRequest) {
       size: body.size,
     });
     const model = entry.id;
-    const images: string[] = [];
-    let cost: number | null = null;
-    let lastBody: Record<string, unknown> | null = null;
+    run = async () => {
+      const images: string[] = [];
+      let cost: number | null = null;
+      let lastBody: Record<string, unknown> | null = null;
 
-    for (let i = 0; i < n; i++) {
-      const request: Record<string, unknown> = {
-        model,
-        modalities: ["image", "text"],
-        usage: { include: true },
-        messages: [
-          {
-            role: "user",
-            content: [
-              ...refs.map((url) => ({ type: "image_url", image_url: { url } })),
-              { type: "text", text },
-            ],
-          },
-        ],
-      };
-      if (aspect) request.image = { image_config: { aspect_ratio: aspect } };
+      for (let i = 0; i < n; i++) {
+        const request: Record<string, unknown> = {
+          model,
+          modalities: ["image", "text"],
+          usage: { include: true },
+          messages: [
+            {
+              role: "user",
+              content: [
+                ...refs.map((url) => ({ type: "image_url", image_url: { url } })),
+                { type: "text", text },
+              ],
+            },
+          ],
+        };
+        if (aspect) request.image = { image_config: { aspect_ratio: aspect } };
 
-      const res = await openrouter("/chat/completions", {
-        method: "POST",
-        json: request,
-      });
-      lastBody = res.body;
-      const out = res.body as {
-        error?: unknown;
-        choices?: {
-          message?: { images?: { image_url?: { url?: string } }[] };
-          finish_reason?: string;
-          error_message?: string;
-        }[];
-      };
-      const choice = out.choices?.[0];
-      if (
-        choice?.finish_reason === "content_filter" ||
-        /content.{0,20}(policy|filter)|inappropr|nsfw|safety/i.test(
-          choice?.error_message || ""
-        )
-      ) {
-        return NextResponse.json(
-          friendlyError({
-            code: "ContentPolicyViolation",
-            message:
-              choice?.error_message ||
-              "The provider's content policy flagged this prompt or one of the reference images.",
-          }),
-          { status: 400 }
-        );
-      }
-      if (res.status !== 200 || out.error) {
-        const errBody = out.error as
-          | { message?: string; code?: string }
-          | undefined;
-        const err = friendlyError(
-          errBody?.message
-            ? {
-                code: String(errBody.code || `HTTP_${res.status}`),
-                message: errBody.message,
-              }
-            : extractError(res.body)
-        );
-        return NextResponse.json(err, {
-          status: res.status >= 400 ? res.status : 502,
+        const res = await openrouter("/chat/completions", {
+          method: "POST",
+          json: request,
         });
+        lastBody = res.body;
+        const out = res.body as {
+          error?: unknown;
+          choices?: {
+            message?: { images?: { image_url?: { url?: string } }[] };
+            finish_reason?: string;
+            error_message?: string;
+          }[];
+        };
+        const choice = out.choices?.[0];
+        if (
+          choice?.finish_reason === "content_filter" ||
+          /content.{0,20}(policy|filter)|inappropr|nsfw|safety/i.test(
+            choice?.error_message || ""
+          )
+        ) {
+          return {
+            ok: false,
+            status: 400,
+            error: friendlyError({
+              code: "ContentPolicyViolation",
+              message:
+                choice?.error_message ||
+                "The provider's content policy flagged this prompt or one of the reference images.",
+            }),
+          };
+        }
+        if (res.status !== 200 || out.error) {
+          const errBody = out.error as
+            | { message?: string; code?: string }
+            | undefined;
+          const err = friendlyError(
+            errBody?.message
+              ? {
+                  code: String(errBody.code || `HTTP_${res.status}`),
+                  message: errBody.message,
+                }
+              : extractError(res.body)
+          );
+          return { ok: false, status: res.status >= 400 ? res.status : 502, error: err };
+        }
+        const c = (res.body.usage as { cost?: unknown } | undefined)?.cost;
+        if (typeof c === "number") cost = (cost ?? 0) + c;
+        const urls = (out.choices?.[0]?.message?.images || [])
+          .map((im) => im.image_url?.url)
+          .filter((u): u is string => Boolean(u));
+        images.push(...urls);
+        if (!urls.length) break;
       }
-      const c = (res.body.usage as { cost?: unknown } | undefined)?.cost;
-      if (typeof c === "number") cost = (cost ?? 0) + c;
-      const urls = (out.choices?.[0]?.message?.images || [])
-        .map((im) => im.image_url?.url)
-        .filter((u): u is string => Boolean(u));
-      images.push(...urls);
-      if (!urls.length) break;
-    }
 
-    if (!images.length) {
-      return NextResponse.json(
-        {
-          code: "EmptyResult",
-          message: `OpenRouter returned no images (finish_reason: ${
-            (
-              lastBody as {
-                choices?: { finish_reason?: string }[];
-              } | null
-            )?.choices?.[0]?.finish_reason || "unknown"
-          }). The model may have refused the prompt, or the request timed out.`,
-          requestId: (lastBody?.id as string) || undefined,
-        },
-        { status: 502 }
-      );
-    }
+      if (!images.length) {
+        return {
+          ok: false,
+          status: 502,
+          error: {
+            code: "EmptyResult",
+            message: `OpenRouter returned no images (finish_reason: ${
+              (
+                lastBody as {
+                  choices?: { finish_reason?: string }[];
+                } | null
+              )?.choices?.[0]?.finish_reason || "unknown"
+            }). The model may have refused the prompt, or the request timed out.`,
+            requestId: (lastBody?.id as string) || undefined,
+          },
+        };
+      }
 
-    return NextResponse.json({
-      images,
-      usage: null,
-      requestId: (lastBody?.id as string) || null,
-      estimate: priced(entry, cost ?? estimateImage(entry, { count: images.length })),
-    });
+      return {
+        ok: true,
+        images,
+        usage: null,
+        requestId: (lastBody?.id as string) || null,
+        estimate: priced(entry, cost ?? estimateImage(entry, { count: images.length })),
+      };
+    };
   } catch (err) {
-    if (err instanceof ApiErrorLike) {
-      return NextResponse.json(err.toApiError(), { status: errorStatus(err) });
-    }
-    return NextResponse.json(
-      {
-        code: "InternalError",
-        message: err instanceof Error ? err.message : String(err),
-      },
-      { status: 500 }
-    );
+    return resultResponse(errorResult(err));
+  }
+
+  if (typeof body.assetId === "string" && body.assetId)
+    return startImageJob(body.assetId, run);
+  try {
+    return resultResponse(await run());
+  } catch (err) {
+    return resultResponse(errorResult(err));
   }
 }

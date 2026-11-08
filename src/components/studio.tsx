@@ -127,6 +127,7 @@ function assetToTask(a: StoredAsset): TaskRecord {
 }
 
 const MAX_POLL_MISSES = 30;
+const IMAGE_POLL_MS = 2000;
 const POLL_PROVIDERS: PollProvider[] = ["dashscope", "qwencloud", "tokenplan", "openrouter"];
 
 type SubmitJson = {
@@ -478,6 +479,15 @@ export default function Studio({
       window.removeEventListener("focus", onVisible);
     };
   }, [loadAssets]);
+
+  const imagePending = assets.some((a) => a.kind === "image" && a.status === "queued");
+  useEffect(() => {
+    if (!imagePending) return;
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible") loadAssets();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [imagePending, loadAssets]);
 
   const updateTask = useCallback((id: string, patch: Partial<TaskRecord>) => {
     setTasks((list) => list.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -961,8 +971,45 @@ export default function Studio({
       }
       setTasks((list) => [...created, ...list]);
 
+      const settleFromAsset = (rec: TaskRecord, a: StoredAsset): boolean | null => {
+        if (a.status === "pending" && !a.results.length) return null;
+        if (a.results.length) {
+          updateTask(rec.id, {
+            status: "succeeded",
+            assetId: a.id,
+            imageUrls: a.results.map((_, k) => `/api/assets/${a.id}/result/${k}`),
+            usage: a.usage,
+            estimate: a.estimate,
+            requestId: a.requestId,
+            error: undefined,
+          });
+          return true;
+        }
+        updateTask(rec.id, {
+          status: "failed",
+          error: { code: "Failed", message: a.error || "Image generation failed." },
+        });
+        return false;
+      };
+
+      const waitForAsset = async (rec: TaskRecord): Promise<boolean> => {
+        for (;;) {
+          await new Promise((r) => setTimeout(r, IMAGE_POLL_MS));
+          try {
+            const res = await fetch(`/api/assets/${rec.id}`, { cache: "no-store" });
+            if (res.status === 404) return false;
+            if (!res.ok) continue;
+            const a = (await res.json().catch(() => null))?.asset as StoredAsset | undefined;
+            if (!a) continue;
+            const done = settleFromAsset(rec, a);
+            if (done !== null) return done;
+          } catch {}
+        }
+      };
+
       const runOne = async (rec: TaskRecord, i: number): Promise<boolean> => {
         try {
+          const background = await persistAsset(rec, { pending: true });
           const res = await fetch(endpoint, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -976,17 +1023,29 @@ export default function Studio({
               promptExtend: payload.promptExtend,
               watermark: payload.watermark,
               seed: i === 0 ? payload.seed : undefined,
+              assetId: background ? rec.id : undefined,
             }),
           });
           const data = (await res.json().catch(() => null)) as
-            | SubmitJson
+            | (SubmitJson & { pending?: boolean; asset?: StoredAsset })
             | null;
           if (!res.ok) {
+            if (background)
+              void fetch(`/api/assets/${rec.id}`, { method: "DELETE" }).catch(() => {});
             updateTask(rec.id, {
               status: "failed",
+              assetId: undefined,
               error: apiError(data, res.status),
             });
             return false;
+          }
+          if (background) {
+            if (data?.asset) {
+              const done = settleFromAsset(rec, data.asset);
+              if (done !== null) return done;
+            }
+            updateTask(rec.id, { status: "running" });
+            return await waitForAsset(rec);
           }
           if (!data) {
             updateTask(rec.id, {

@@ -158,7 +158,7 @@ const charStamp = (c: Character) => `${activeLook(c).id}:${c.updatedAt ?? c.crea
 function nameIndex(text: string, name: string): number {
   const n = name.trim();
   if (!n) return -1;
-  const m = new RegExp(`(?<![\w])${escapeRe(n)}(?![\w-])`).exec(text);
+  const m = new RegExp(`(?<![\\w])${escapeRe(n)}(?![\\w-])`).exec(text);
   return m ? m.index : -1;
 }
 
@@ -497,7 +497,7 @@ export default function VideoPanel({
     itemsRef.current = items;
   }, [items]);
 
-  const searchText = promptTab === "rewritten" ? `${prompt}\n${rewrote}` : prompt;
+  const searchText = promptTab === "rewritten" && rewrote.trim() ? rewrote : prompt;
   const syncEnv = useRef<SyncEnv>({
     chars: [],
     charsFor: undefined,
@@ -1188,10 +1188,12 @@ export default function VideoPanel({
 
   const syncChain = useRef<Promise<unknown>>(Promise.resolve());
 
-  async function runCharacterSync(): Promise<MediaItem[]> {
+  async function runCharacterSync(text?: string): Promise<MediaItem[]> {
     const showNotes = (notes: string[]) =>
       setCharNotes((cur) => (cur.join("\n") === notes.join("\n") ? cur : notes));
-    const env = syncEnv.current;
+    const envNow = (): SyncEnv =>
+      text === undefined ? syncEnv.current : { ...syncEnv.current, searchText: text };
+    const env = envNow();
     if (env.charsFor !== env.projectId) return itemsRef.current;
     if (env.frameMode) {
       const named = charTargets(env).targets.map((c) => c.name);
@@ -1211,7 +1213,7 @@ export default function VideoPanel({
       warnings.forEach(notify);
       if (!refs) notify(`Could not load ${p.c.name}'s references`);
     }
-    const now = syncEnv.current;
+    const now = envNow();
     if (now.frameMode) return itemsRef.current;
     const { targets, notes: targetNotes } = charTargets(now);
     const { plans, notes } = planCharacters(itemsRef.current, targets, now);
@@ -1226,17 +1228,22 @@ export default function VideoPanel({
     return next;
   }
 
-  function syncCharacters(): Promise<MediaItem[]> {
-    const run = syncChain.current.then(runCharacterSync, runCharacterSync);
+  function syncCharacters(text?: string): Promise<MediaItem[]> {
+    const go = () => runCharacterSync(text);
+    const run = syncChain.current.then(go, go);
     syncChain.current = run.catch(() => undefined);
     return run;
   }
 
-  async function syncCharactersNow(): Promise<MediaItem[]> {
+  async function syncCharactersNow(text?: string): Promise<MediaItem[]> {
     await loadCharacters();
     await new Promise((r) => requestAnimationFrame(r));
-    return syncCharacters();
+    return syncCharacters(text);
   }
+
+  const removedNamed = chars.filter(
+    (c) => !c.hidden && suppressedChars.includes(c.id) && nameIndex(searchText, c.name) >= 0
+  );
 
   const syncRef = useRef(syncCharacters);
   useEffect(() => {
@@ -1676,7 +1683,7 @@ export default function VideoPanel({
     }
     setRewriting(true);
     try {
-      const list = await syncCharactersNow();
+      const list = await syncCharactersNow(text);
       const inventory = await buildInventory(list);
       const res = await fetch("/api/rewrite-prompt", {
         method: "POST",
@@ -1837,13 +1844,16 @@ export default function VideoPanel({
           "Media changed since the rewrite — Image/Video numbers in the rewritten text may no longer match"
         );
       let finalPrompt = sourceText;
-      const searchText = useRewritten ? `${prompt}\n${rewrote}` : prompt;
+      const searchText = useRewritten ? rewrote : prompt;
       const env = syncEnv.current;
       const firstAt = (c: Character) => working.findIndex((i) => i.characterId === c.id);
       const attached = env.chars
         .filter((c) => firstAt(c) >= 0)
         .sort((a, b) => firstAt(a) - firstAt(b));
-      const describedOnly = charTargets(env).targets;
+      const removedNamed = env.chars.filter(
+        (c) => !c.hidden && env.suppressed.includes(c.id) && nameIndex(env.searchText, c.name) >= 0
+      );
+      const describedOnly = [...charTargets(env).targets, ...removedNamed];
       const targets = [
         ...attached,
         ...describedOnly.filter((c) => !attached.some((a) => a.id === c.id)),
@@ -2100,8 +2110,19 @@ export default function VideoPanel({
           </div>
         )}
 
-        {charNotes.length > 0 && (
+        {(charNotes.length > 0 || removedNamed.length > 0) && (
           <div className="mb-3 space-y-1" aria-live="polite">
+            {removedNamed.map((c) => (
+              <div key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <p className="text-xs text-warn">
+                  You removed {c.name}&apos;s references, so {c.name} is sent
+                  without images, as a description only.
+                </p>
+                <Btn variant="ghost" size="sm" onClick={() => pickCharacter(c, "menu")}>
+                  Attach {c.name} again
+                </Btn>
+              </div>
+            ))}
             {charNotes.map((n) => (
               <p key={n} className="text-xs text-warn">
                 {n}
@@ -2207,21 +2228,10 @@ export default function VideoPanel({
 
             {items.length > 0 && (
               <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
-                {items.map((item) => {
-                  const owner = item.characterId
-                    ? chars.find((c) => c.id === item.characterId)?.name ?? "a character"
-                    : null;
-                  return (
+                {items.map((item) => (
                   <div
                     key={item.id}
-                    title={
-                      owner
-                        ? `Sent with ${owner} when you generate. Mention ${owner} by name to use it; it is not offered in @ mentions.`
-                        : undefined
-                    }
-                    className={`relative border rounded-md overflow-hidden bg-panel2 group ${
-                      owner ? "border-dashed border-line" : "border-line"
-                    }`}
+                    className="relative border border-line rounded-md overflow-hidden bg-panel2 group"
                   >
                     <div className="aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
                       {item.kind === "audio" ? (
@@ -2244,20 +2254,13 @@ export default function VideoPanel({
                           <img
                             src={item.previewUrl}
                             alt={item.name}
-                            className={`w-full h-full object-cover ${
-                              owner ? "saturate-[.35] brightness-75" : ""
-                            }`}
+                            className="w-full h-full object-cover"
                           />
                         )
                       ) : (
                         <span className="text-muted text-xs font-mono">…</span>
                       )}
                     </div>
-                    {owner && item.kind !== "audio" && (
-                      <span className="absolute top-1.5 left-1.5 max-w-[calc(100%-2.75rem)] truncate rounded-full bg-black/70 backdrop-blur-sm px-2 py-0.5 text-2xs font-medium text-ink">
-                        {owner}
-                      </span>
-                    )}
                     <div className="px-2 py-1.5">
                       <p className="text-2xs truncate" title={item.name}>
                         {item.state === "ready" && item.kind === "image"
@@ -2269,14 +2272,12 @@ export default function VideoPanel({
                               : item.kind}{" "}
                         · {item.name}
                       </p>
-                      <p className={`text-2xs text-muted truncate ${owner ? "" : "font-mono"}`}>
+                      <p className="text-2xs font-mono text-muted">
                         {item.state === "uploading" && "uploading…"}
                         {item.state === "ready" &&
-                          (owner
-                            ? `Sent with ${owner}`
-                            : `${item.size ? formatBytes(item.size) : "attached"}${
-                                item.durationSec ? ` · ${item.durationSec.toFixed(1)}s` : ""
-                              }`)}
+                          `${item.size ? formatBytes(item.size) : "attached"}${
+                            item.durationSec ? ` · ${item.durationSec.toFixed(1)}s` : ""
+                          }`}
                         {item.state === "error" && (
                           <span className="text-danger">{item.error}</span>
                         )}
@@ -2297,8 +2298,7 @@ export default function VideoPanel({
                       ✕
                     </button>
                   </div>
-                  );
-                })}
+                ))}
                 <AddTile
                   accept={acceptFor(MAX_IMAGES, MAX_VIDEOS, MAX_AUDIO)}
                   onFiles={handleFiles}

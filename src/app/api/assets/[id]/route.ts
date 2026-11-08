@@ -1,6 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 import { deleteAsset, listAssets, setAssetHidden, setAssetPinned } from "@/lib/assets";
 import { stopBeforeDelete } from "@/lib/video-retry";
+import { expireStaleImageJobs } from "@/lib/image-jobs";
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const { id } = await params;
+  await expireStaleImageJobs();
+  const asset = (await listAssets()).find((a) => a.id === id);
+  if (!asset) {
+    return NextResponse.json(
+      { code: "NotFound", message: "Asset not found." },
+      { status: 404 }
+    );
+  }
+  return NextResponse.json({ asset });
+}
 
 export async function DELETE(
   _req: NextRequest,

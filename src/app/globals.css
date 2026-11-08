@@ -18,6 +18,7 @@
   --cat-image: #7cc7ff;
   --cat-director: #f2b13c;
   --cat-rewrite: #c58cff;
+  --character: #c58cff;
 }
 
 @theme inline {
@@ -38,6 +39,7 @@
   --color-cat-image: var(--cat-image);
   --color-cat-director: var(--cat-director);
   --color-cat-rewrite: var(--cat-rewrite);
+  --color-character: var(--character);
 
   --font-sans: var(--font-plex-sans);
   --font-mono: var(--font-plex-mono);
