@@ -25,7 +25,7 @@ function callAppearance(model: ModelEntry, textPrompt: string, images: string[])
       { role: "system", content: APPEARANCE_SYSTEM_PROMPT },
       { role: "user", content },
     ],
-    { temperature: 0.9, maxTokens: 200 }
+    { temperature: images.length ? 0.3 : 0.9, maxTokens: 200, enableThinking: false }
   );
 }
 
@@ -51,25 +51,20 @@ export async function POST(req: NextRequest) {
     .slice(0, 3);
 
   try {
-    const textPrompt = buildAppearancePrompt(name, body.hint);
-
-    if (images.length) {
-      const vision = await roleModel("appearance", { vision: true }).catch(() => null);
-      if (vision) {
-        const res = await callAppearance(vision, textPrompt, images);
-        if (res.ok && res.text)
-          return NextResponse.json({
-            description: res.text.slice(0, 600),
-            model: vision.id,
-            fallback: false,
-            requestId: res.requestId,
-          });
-      }
+    const textPrompt = buildAppearancePrompt(name, body.hint, images.length > 0);
+    const model = images.length
+      ? await roleModel("appearance", { vision: true })
+      : await roleModel("director");
+    const res = await callAppearance(model, textPrompt, images);
+    if (!res.ok) {
+      const error = images.length
+        ? {
+            ...res.error,
+            message: `${model.label} could not read the reference images: ${res.error.message}`,
+          }
+        : res.error;
+      return NextResponse.json(error, { status: res.status });
     }
-
-    const writer = await roleModel("director");
-    const res = await callAppearance(writer, textPrompt, []);
-    if (!res.ok) return NextResponse.json(res.error, { status: res.status });
     if (!res.text) {
       return NextResponse.json(
         {
@@ -82,8 +77,8 @@ export async function POST(req: NextRequest) {
     }
     return NextResponse.json({
       description: res.text.slice(0, 600),
-      model: writer.id,
-      fallback: images.length > 0,
+      model: model.id,
+      images: images.length,
       requestId: res.requestId,
     });
   } catch (err) {

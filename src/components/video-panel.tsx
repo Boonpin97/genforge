@@ -1,10 +1,12 @@
 "use client";
 
+import { soon } from "@/lib/soon";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import DropZone, {
   AddTile,
+  DropArea,
   blobToDataUrl,
   fileToDataUrl,
   formatBytes,
@@ -572,10 +574,15 @@ export default function VideoPanel({
     };
   }, [active, loadCharacters]);
 
-  const mediaOrder = useRef<Record<"Image" | "Video" | "Audio", string[]> | null>(null);
+  const mediaOrder = useRef<Record<
+    "Image" | "Video" | "Audio",
+    { id: string; own: boolean }[]
+  > | null>(null);
   useEffect(() => {
     const ids = (k: MediaItem["kind"]) =>
-      items.filter((i) => i.kind === k && i.state === "ready").map((i) => i.id);
+      items
+        .filter((i) => i.kind === k && i.state === "ready")
+        .map((i) => ({ id: i.id, own: !i.characterId }));
     const order = { Image: ids("image"), Video: ids("video"), Audio: ids("audio") };
     const prev = mediaOrder.current;
     mediaOrder.current = order;
@@ -584,8 +591,9 @@ export default function VideoPanel({
     let changed = false;
     for (const k of ["Image", "Video", "Audio"] as const) {
       const m = new Map<number, number>();
-      prev[k].forEach((id, i) => {
-        const j = order[k].indexOf(id);
+      prev[k].forEach((it, i) => {
+        if (!it.own) return;
+        const j = order[k].findIndex((x) => x.id === it.id);
         if (j >= 0 && j !== i) m.set(i + 1, j + 1);
       });
       if (m.size) changed = true;
@@ -1237,9 +1245,24 @@ export default function VideoPanel({
 
   async function syncCharactersNow(text?: string): Promise<MediaItem[]> {
     await loadCharacters();
-    await new Promise((r) => requestAnimationFrame(r));
+    await new Promise<void>((r) => soon(r));
     return syncCharacters(text);
   }
+
+  const namedPins = pinnedChars
+    .filter((id) => {
+      const c = chars.find((x) => x.id === id);
+      return Boolean(c && nameIndex(searchText, c.name) >= 0);
+    })
+    .join();
+  useEffect(() => {
+    if (!namedPins) return;
+    const ids = namedPins.split(",");
+    const raf = requestAnimationFrame(() =>
+      setPinnedChars((s) => s.filter((id) => !ids.includes(id)))
+    );
+    return () => cancelAnimationFrame(raf);
+  }, [namedPins]);
 
   const removedNamed = chars.filter(
     (c) => !c.hidden && suppressedChars.includes(c.id) && nameIndex(searchText, c.name) >= 0
@@ -1556,6 +1579,17 @@ export default function VideoPanel({
   ) {
     if (slot === "first") setFirstFrame(item);
     else setLastFrame(item);
+  }
+
+  function freeFrameSlot(): "first" | "last" | null {
+    if (!firstFrame) return "first";
+    if (hasLastFrame && !lastFrame) return "last";
+    notify(
+      hasLastFrame
+        ? "Both frames are set. Drop onto a frame to replace it."
+        : "The first frame is set. Drop onto it to replace it."
+    );
+    return null;
   }
 
   async function setFrameFromFile(slot: "first" | "last", file: File) {
@@ -1917,11 +1951,10 @@ export default function VideoPanel({
   });
   useEffect(() => {
     if (!autoSendReady || promptTab !== "rewritten") return;
-    const raf = requestAnimationFrame(() => {
+    return soon(() => {
       setAutoSendReady(false);
       void submitRef.current();
     });
-    return () => cancelAnimationFrame(raf);
   }, [autoSendReady, promptTab, rewrote]);
 
   const imgIdx = (item: MediaItem) =>
@@ -2072,6 +2105,20 @@ export default function VideoPanel({
         )}
       </Panel>
 
+      <DropArea
+        onFiles={(files) => {
+          if (!frameMode) return void handleFiles(files);
+          const slot = freeFrameSlot();
+          if (slot && files[0]) void setFrameFromFile(slot, files[0]);
+        }}
+        onAssetDrop={(d) => {
+          if (!frameMode) return void handleAssetDrop(d);
+          const slot = freeFrameSlot();
+          if (slot) void setFrameFromAsset(slot, d);
+        }}
+      
+        className="rounded-lg"
+      >
       <Panel title={frameMode ? "First / last frame" : "Reference media"} step="02">
         {showFrameMode && (
           <div className="mb-3">
@@ -2142,6 +2189,11 @@ export default function VideoPanel({
                       : "Last frame (optional)"}
                   </p>
                   {item ? (
+                    <DropArea
+                      onFiles={(files) => files[0] && void setFrameFromFile(slot, files[0])}
+                      onAssetDrop={(d) => void setFrameFromAsset(slot, d)}
+                      className="rounded-md"
+                    >
                     <div className="relative border border-line rounded-md overflow-hidden bg-panel2 group">
                       <div className="aspect-video bg-black/40 flex items-center justify-center overflow-hidden">
                         {item.previewUrl || item.url ? (
@@ -2183,6 +2235,7 @@ export default function VideoPanel({
                         ✕
                       </button>
                     </div>
+                    </DropArea>
                   ) : (
                     <AddTile
                       accept="image/*"
@@ -2319,6 +2372,7 @@ export default function VideoPanel({
           </>
         )}
       </Panel>
+      </DropArea>
 
       <Panel title="Output settings" step="03">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

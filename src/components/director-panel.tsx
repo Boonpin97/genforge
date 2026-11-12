@@ -10,7 +10,7 @@ import {
 import { createPortal } from "react-dom";
 import MentionTextArea from "./mention-textarea";
 import Link from "next/link";
-import { Btn, ErrorBox, Field, Panel, Seg, Select } from "./ui";
+import { Btn, ErrorBox, Field, Panel, Seg, Select, Toggle } from "./ui";
 import { alertDone } from "@/lib/notify";
 import { draftKey, readDraft, writeDraft } from "@/lib/draft";
 import { formatSGD } from "@/lib/pricing";
@@ -36,7 +36,18 @@ type ScriptEntry = {
   script: string;
   estimate: number | null;
   revised?: boolean;
+  durationMs?: number;
+  thinking?: boolean;
 };
+
+const clock = () => Date.now();
+
+function fmtDuration(ms: number): string {
+  const total = Math.max(0, Math.round(ms / 1000));
+  const m = Math.floor(total / 60);
+  const sec = total % 60;
+  return m ? `${m}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
+}
 
 type ScrollSpot = { pre: number; pane: number };
 
@@ -93,7 +104,11 @@ export default function DirectorPanel({
     models.find((m) => m.id === defaultModel)?.id ??
     models[0]?.id ??
     "";
-  const [busy, setBusy] = useState(false);
+  const [running, setRunning] = useState<number[]>([]);
+  const [now, setNow] = useState(0);
+  const busy = running.length > 0;
+  const [thinking, setThinking] = useState(true);
+  const thinkLoadedRef = useRef(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [history, setHistory] = useState<ScriptEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -104,6 +119,32 @@ export default function DirectorPanel({
   const projectQs = projectId === null ? "none" : projectId;
   const loadedFor = useRef<string | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => {
+      thinkLoadedRef.current = true;
+      try {
+        if (localStorage.getItem("genforge.directorThinking") === "0")
+          setThinking(false);
+      } catch {}
+    });
+    return () => cancelAnimationFrame(raf);
+  }, []);
+  useEffect(() => {
+    if (!thinkLoadedRef.current) return;
+    try {
+      localStorage.setItem("genforge.directorThinking", thinking ? "1" : "0");
+    } catch {}
+  }, [thinking]);
+
+  useEffect(() => {
+    if (!busy) return;
+    const tick = () => setNow(Date.now());
+    tick();
+    const id = window.setInterval(tick, 1000);
+    return () => window.clearInterval(id);
+  }, [busy]);
+  const elapsed = busy ? fmtDuration(now - Math.min(...running)) : "";
 
   const draftId = draftKey(projectId, "director");
   const draftReady = useRef<string | null>(null);
@@ -162,6 +203,8 @@ export default function DirectorPanel({
             script: string;
             estimate: number | null;
             revised: boolean;
+            durationMs?: number;
+            thinking?: boolean;
           }) => ({
             id: s.id,
             ts: s.createdAt,
@@ -172,6 +215,8 @@ export default function DirectorPanel({
             script: s.script,
             estimate: s.estimate,
             revised: s.revised,
+            durationMs: s.durationMs,
+            thinking: s.thinking,
           })
         );
         setHistory(incoming.sort((a, b) => b.ts - a.ts));
@@ -281,7 +326,8 @@ export default function DirectorPanel({
     const text = premise.trim();
     if (!text) return;
     const target = amending ? activeScript : null;
-    setBusy(true);
+    const startedAt = clock();
+    setRunning((r) => [...r, startedAt]);
     setError(null);
     try {
       const res = await fetch("/api/director", {
@@ -298,6 +344,7 @@ export default function DirectorPanel({
                 parentId: target.id,
                 model,
                 projectId,
+                thinking,
               }
             : {
                 premise: text,
@@ -305,6 +352,7 @@ export default function DirectorPanel({
                 extraCast: extraCast.trim() || undefined,
                 model,
                 projectId,
+                thinking,
               }
         ),
       });
@@ -348,6 +396,8 @@ export default function DirectorPanel({
           script: data.script,
           estimate: data.estimate ?? null,
           revised: Boolean(target),
+          durationMs: data.durationMs ?? Date.now() - startedAt,
+          thinking: data.thinking ?? thinking,
         };
         setSelectedId(entry.id);
         setCreating(false);
@@ -365,7 +415,7 @@ export default function DirectorPanel({
         tag: "director",
       });
     } finally {
-      setBusy(false);
+      setRunning((r) => r.filter((t) => t !== startedAt));
     }
   }
 
@@ -415,8 +465,10 @@ export default function DirectorPanel({
           <p className="mt-3 text-xs text-muted">
             <span className="animate-pulse-dot inline-block text-warn">●</span>{" "}
             {amending
-              ? "director applying your amendment…"
-              : "director is writing — the full script lands here when done"}
+              ? "Applying your amendment"
+              : "Writing the storyboard. The full script lands here when it is done"}
+            {running.length > 1 ? ` (${running.length} takes running)` : ""}. Elapsed{" "}
+            <span className="font-mono text-ink">{elapsed}</span>
           </p>
         </Panel>
       )}
@@ -482,6 +534,14 @@ export default function DirectorPanel({
                   >
                     {h.revised && h.instruction ? h.instruction : h.premise}
                   </span>
+                  {h.durationMs !== undefined && (
+                    <span
+                      className="shrink-0 font-mono text-muted"
+                      title={`Generation time${h.thinking === undefined ? "" : h.thinking ? ", thinking on" : ", thinking off"}`}
+                    >
+                      {fmtDuration(h.durationMs)}
+                    </span>
+                  )}
                   {h.estimate !== null && (
                     <span className="shrink-0 text-accent">
                       {formatSGD(h.estimate)}
@@ -542,15 +602,32 @@ export default function DirectorPanel({
                 <option value="none">Unassigned</option>
               )}
             </select>
-            {current.estimate !== null && (
-              <span className="ml-auto text-2xs text-muted">
-                Est. cost{" "}
-                <span
-                  className="text-accent"
-                  title="Estimate based on rates in src/lib/pricing.ts · shown in SGD @ 1.3 USD"
-                >
-                  {formatSGD(current.estimate)}
-                </span>
+            {(current.durationMs !== undefined || current.estimate !== null) && (
+              <span className="ml-auto flex flex-col items-end gap-0.5 text-2xs text-muted">
+                {current.durationMs !== undefined && (
+                  <span>
+                    Generated in{" "}
+                    <span className="font-mono text-ink">
+                      {fmtDuration(current.durationMs)}
+                    </span>
+                    {current.thinking === undefined
+                      ? ""
+                      : current.thinking
+                        ? " with thinking on"
+                        : " with thinking off"}
+                  </span>
+                )}
+                {current.estimate !== null && (
+                  <span>
+                    Est. cost{" "}
+                    <span
+                      className="text-accent"
+                      title="Estimate based on rates in src/lib/pricing.ts · shown in SGD @ 1.3 USD"
+                    >
+                      {formatSGD(current.estimate)}
+                    </span>
+                  </span>
+                )}
               </span>
             )}
           </div>
@@ -750,6 +827,12 @@ export default function DirectorPanel({
             </Link>
           )}
         </Field>
+        <div
+          className="mt-3"
+          title="Thinking mode: the writer reasons before it answers, which usually gives a tighter storyboard but takes several minutes and costs more. Off is much faster. Either way the request stops after 10 minutes."
+        >
+          <Toggle checked={thinking} onChange={setThinking} label="Think" />
+        </div>
         <Btn
           onClick={generate}
           disabled={!premise.trim() || !model}
@@ -761,8 +844,9 @@ export default function DirectorPanel({
         {busy && (
           <p className="mt-2 text-xs text-muted">
             {amending
-              ? "director revising…"
-              : "director writing… you can start another take"}
+              ? `Revising${thinking ? " with thinking on, this can take a few minutes" : ""}…`
+              : `Writing${thinking ? " with thinking on, this can take a few minutes" : ""}… you can start another take`}{" "}
+            <span className="font-mono text-ink">{elapsed}</span>
           </p>
         )}
       </Panel>

@@ -183,6 +183,8 @@ export type DirectorRun = {
   kind?: "director" | "rewrite";
   projectId?: string | null;
   copied?: boolean;
+  durationMs?: number;
+  thinking?: boolean;
 };
 
 export type Project = {

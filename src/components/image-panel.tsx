@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import DropZone, {
   AddTile,
+  DropArea,
   blobToDataUrl,
   fileToDataUrl,
   formatBytes,
@@ -210,6 +211,54 @@ export default function ImagePanel({
   useEffect(() => {
     itemsRef.current = items;
   }, [items]);
+  const promptNow = useRef(prompt);
+  useEffect(() => {
+    promptNow.current = prompt;
+  }, [prompt]);
+
+  const charItemKey = items
+    .map((i) => i.characterId)
+    .filter(Boolean)
+    .join();
+  useEffect(() => {
+    if (!charItemKey) return;
+    let cancelled = false;
+    const prune = async () => {
+      if (document.visibilityState !== "visible") return;
+      let chars: Character[];
+      try {
+        const res = await fetch(
+          `/api/characters?project=${projectId === null ? "none" : projectId}`,
+          { cache: "no-store" }
+        );
+        if (!res.ok) return;
+        const d = await res.json();
+        if (!Array.isArray(d.characters)) return;
+        chars = d.characters;
+      } catch {
+        return;
+      }
+      if (cancelled) return;
+      const text = promptNow.current;
+      const gone = new Set<string>();
+      for (const id of charItemKey.split(",")) {
+        const c = chars.find((x) => x.id === id);
+        if (!c || !new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text))
+          gone.add(id);
+      }
+      if (gone.size)
+        setItems((list) =>
+          list.filter((i) => !i.characterId || !gone.has(i.characterId))
+        );
+    };
+    const first = window.setTimeout(prune, 300);
+    const poll = window.setInterval(prune, 2000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(first);
+      window.clearInterval(poll);
+    };
+  }, [charItemKey, prompt, projectId]);
 
   const promptRef = useRef(0);
   const [promptSaved, setPromptSaved] = useState<"ok" | "err" | null>(null);
@@ -462,7 +511,7 @@ export default function ImagePanel({
     }
     setPreparing(true);
     try {
-      const working = [...itemsRef.current];
+      const working: ImageItem[] = [];
       let chars: Character[] = [];
       try {
         const res = await fetch(
@@ -479,16 +528,22 @@ export default function ImagePanel({
           !c.hidden &&
           new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text)
       );
-      const attachedIds = new Set(
-        working
-          .map((i) => i.characterId)
-          .filter((x): x is string => Boolean(x))
-      );
+      const named = (c: Character) =>
+        new RegExp(`(?<![\\w])${escapeRe(c.name)}(?![\\w-])`).test(text);
+      for (const i of itemsRef.current) {
+        if (!i.characterId) {
+          working.push(i);
+          continue;
+        }
+        const c = chars.find((x) => x.id === i.characterId);
+        if (c && named(c)) working.push(i);
+      }
+      if (working.length !== itemsRef.current.length) setItems(working);
+      const keptIds = new Set(working.map((i) => i.characterId).filter(Boolean));
       const targets = [
         ...mentioned,
         ...chars.filter(
-          (c) =>
-            attachedIds.has(c.id) && !mentioned.some((m) => m.id === c.id)
+          (c) => keptIds.has(c.id) && !mentioned.some((m) => m.id === c.id)
         ),
       ];
       for (const c of targets) {
@@ -654,6 +709,7 @@ export default function ImagePanel({
         )}
       </Panel>
 
+      <DropArea onFiles={handleFiles} onAssetDrop={handleAssetDrop} className="rounded-lg">
       <Panel title="Reference images" step="02">
         {items.length === 0 && MAX_IMAGES === 0 && (
           <p className="text-sm text-muted">
@@ -732,6 +788,7 @@ export default function ImagePanel({
           </div>
         )}
       </Panel>
+      </DropArea>
 
       <Panel title="Output settings" step="03">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

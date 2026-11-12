@@ -13,6 +13,7 @@ import VideoPanel, { type VideoSubmitPayload } from "./video-panel";
 import ImagePanel, { type ImageSubmitPayload } from "./image-panel";
 import CharactersPanel from "./characters-panel";
 import SettingsMenu from "./settings-menu";
+import ProjectName from "./project-name";
 import DirectorPanel from "./director-panel";
 import AnalyticsPanel from "./analytics-panel";
 import AssetsGallery from "./assets-gallery";
@@ -1208,12 +1209,7 @@ export default function Studio({
               GENFORGE
             </span>
             <span className="hidden sm:block w-px h-5 bg-line shrink-0" />
-            <span
-              className="hidden sm:block text-sm text-muted truncate max-w-[220px]"
-              title={projectName || "project"}
-            >
-              {projectName || (projectId === null ? "Unassigned" : projectId)}
-            </span>
+            <ProjectName projectId={projectId} initialName={projectName} />
           </div>
           <div className="ml-auto flex items-center gap-2 text-xs">
             {activeCount > 0 && (

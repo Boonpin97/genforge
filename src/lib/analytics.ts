@@ -32,6 +32,8 @@ export async function recordDirectorRun(input: {
   revised?: boolean;
   kind?: "director" | "rewrite";
   projectId?: string | null;
+  durationMs?: number;
+  thinking?: boolean;
 }): Promise<string> {
   const id = randomUUID();
   const run: DirectorRun = {
@@ -49,6 +51,8 @@ export async function recordDirectorRun(input: {
     revised: input.revised,
     kind: input.kind ?? "director",
     projectId: input.projectId ?? null,
+    durationMs: input.durationMs,
+    thinking: input.thinking,
   };
   await locked(async () => {
     const runs = await readRuns();
@@ -125,6 +129,8 @@ export type DirectorScript = {
   estimate: number | null;
   revised: boolean;
   projectId?: string | null;
+  durationMs?: number;
+  thinking?: boolean;
 };
 
 export async function listDirectorScripts(
@@ -150,6 +156,8 @@ export async function listDirectorScripts(
       estimate: r.estimate ?? null,
       revised: Boolean(r.revised),
       projectId: r.projectId ?? null,
+      durationMs: r.durationMs,
+      thinking: r.thinking,
     }));
 }
 

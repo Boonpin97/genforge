@@ -98,7 +98,7 @@ export type Roles = { director: string; rewrite: string; appearance: string };
 export type ProviderConfig = { apiKey: string; baseUrl: string };
 
 export type GenforgeConfig = {
-  version: 1;
+  version: 2;
   providers: Record<ProviderId, ProviderConfig>;
   videoProvider: "dashscope" | "qwencloud";
   roles: Roles;
@@ -880,9 +880,9 @@ export const DEFAULT_MODELS: ModelEntry[] = [
     policy: { vision: true, maxTokens: 8000 },
     notes: TP_CREDIT_NOTE,
   },
-  text("qwen3.8-max", "Qwen 3.8 Max", "alibaba", false, 0.002, 0.002, true),
-  text("qwen3.8-flash", "Qwen 3.8 Flash", "alibaba", false, 0.002, 0.002, true),
-  text("qwen3-vl-flash", "Qwen 3 VL Flash", "alibaba", true, 0.002, 0.002, true),
+  text("qwen3.8-max", "Qwen 3.8 Max", "alibaba", true, 0.002, 0.002, true),
+  text("qwen3.8-flash", "Qwen 3.8 Flash", "alibaba", true, 0.002, 0.002, true),
+  text("qwen3-vl-plus", "Qwen 3 VL Plus", "alibaba", true, 0.002, 0.002),
   text("anthropic/claude-opus-5.5", "Claude Opus 5.5", "openrouter", true, 0.004, 0.02),
   text("anthropic/claude-sonnet-5", "Claude Sonnet 5", "openrouter", true, 0.002, 0.01),
   text("openai/gpt-5.6-sol", "GPT-5.6 Sol", "openrouter", true, 0.002, 0.01),
@@ -894,12 +894,12 @@ export const DEFAULT_MODELS: ModelEntry[] = [
 export const DEFAULT_ROLES: Roles = {
   director: "qwen3.8-max",
   rewrite: "qwen3.8-flash",
-  appearance: "qwen3-vl-flash",
+  appearance: "qwen3.8-flash",
 };
 
 export function defaultConfig(): GenforgeConfig {
   return {
-    version: 1,
+    version: 2,
     providers: {
       dashscope: { apiKey: "", baseUrl: DEFAULT_BASE_URLS.dashscope },
       qwencloud: { apiKey: "", baseUrl: DEFAULT_BASE_URLS.qwencloud },

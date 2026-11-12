@@ -243,7 +243,7 @@ export function getSystemPrompt(): string {
 
 export const APPEARANCE_SYSTEM_PROMPT = `You write appearance/persona descriptions for an AI video & image reference library.
 
-If reference images are attached, describe what you actually see in them — clothing colors, hair, eyes, build, distinguishing marks, expression, posture. Only fill gaps from the character name.
+If reference images are attached, describe only what you actually see in them — build, hair (color, length, style), eye color, every visible garment with its color, accessories, distinguishing marks, expression, posture. The images are the truth: never invent a trait the images do not show, and when earlier notes from the user contradict the images, follow the images. Do not guess traits from the character name. Persona/temperament may come from the user's notes or the visible expression.
 
 Output ONE description line only: 8–20 lowercase comma-separated traits — build, hair color, eye color, clothing (garment types AND their specific colors, e.g. "crimson flight jacket", "charcoal leggings"), distinguishing details, temperament/persona. Always state what the character is wearing, including the colors of each garment. No sentences, no quotes, no markdown, no trailing period, no preamble.
 
@@ -251,9 +251,20 @@ Examples:
 young woman, short silver hair, amber eyes, worn crimson flight jacket over a black tank top, charcoal cargo pants, brown boots, confident smirk
 red panda in a white-and-orange spacesuit with brass buckles, teal visor, expressive dark eyes, scruffy rust-colored tail, endlessly curious`;
 
-export function buildAppearancePrompt(name: string, hint?: string): string {
+export function buildAppearancePrompt(
+  name: string,
+  hint?: string,
+  hasImages = false
+): string {
+  const note = hint?.trim();
+  if (hasImages)
+    return `Character name: ${name.trim()}${
+      note
+        ? `\nEarlier notes from the user (may be outdated; keep only what the images confirm, plus persona): ${note}`
+        : ""
+    }\nDescribe the character shown in the attached reference image(s).`;
   return `Character name: ${name.trim()}${
-    hint?.trim() ? `\nRough idea from the user (expand and refine it): ${hint.trim()}` : ""
+    note ? `\nRough idea from the user (expand and refine it): ${note}` : ""
   }`;
 }
 

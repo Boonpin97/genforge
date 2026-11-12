@@ -13,7 +13,7 @@ import { listCharacters } from "@/lib/characters";
 import { listDirectorScripts, recordDirectorRun } from "@/lib/analytics";
 import { parseProjectParam } from "@/lib/projects";
 
-export const maxDuration = 300;
+export const maxDuration = 600;
 
 export async function GET(req: NextRequest) {
   const project = parseProjectParam(req.nextUrl.searchParams.get("project"));
@@ -31,6 +31,7 @@ type Body = {
   parentId?: string;
   model?: string;
   projectId?: string | null;
+  thinking?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -68,6 +69,8 @@ export async function POST(req: NextRequest) {
     const wanted = new Set(body.characterIds || []);
     const characters = all.filter((c) => wanted.has(c.id));
 
+    const thinking = body.thinking !== false;
+    const startedAt = Date.now();
     const res = await chat(
       entry,
       [
@@ -83,11 +86,21 @@ export async function POST(req: NextRequest) {
           }),
         },
       ],
-      { temperature: 0.9, maxTokens: 8000 }
+      {
+        temperature: 0.9,
+        maxTokens: 8000,
+        enableThinking: thinking,
+        stream: true,
+        timeoutMs: 600_000,
+      }
     );
 
+    const durationMs = Date.now() - startedAt;
     if (!res.ok) {
-      return NextResponse.json(res.error, { status: res.status });
+      return NextResponse.json(
+        { ...res.error, durationMs },
+        { status: res.status }
+      );
     }
 
     const merged =
@@ -124,6 +137,8 @@ export async function POST(req: NextRequest) {
           ? body.parentId
           : undefined,
       projectId: typeof body.projectId === "string" ? body.projectId : null,
+      durationMs,
+      thinking,
     }).catch(() => null);
 
     return NextResponse.json({
@@ -133,6 +148,8 @@ export async function POST(req: NextRequest) {
       model,
       usage,
       estimate,
+      durationMs,
+      thinking,
       requestId: res.requestId,
     });
   } catch (err) {

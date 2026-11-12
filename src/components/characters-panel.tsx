@@ -357,11 +357,9 @@ export default function CharactersPanel({
       setDescription(data.description);
       setNotice({
         kind: "ok",
-        msg: data.fallback
-          ? "Drafted from the name only — model couldn't read the images"
-          : imageDataUrls.length
-            ? `Description drafted from your reference images (${data.model})`
-            : `Description drafted from the name (${data.model})`,
+        msg: data.images
+          ? `Description drafted from ${data.images} reference image${data.images === 1 ? "" : "s"} (${data.model})`
+          : `No reference images yet, so this was drafted from the name only (${data.model})`,
       });
     } catch (e) {
       setNotice({

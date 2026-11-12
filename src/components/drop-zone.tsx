@@ -139,6 +139,65 @@ function readDrop(e: React.DragEvent): { asset?: AssetDropData; files: File[] } 
   return { files: Array.from(e.dataTransfer.files || []) };
 }
 
+function carriesMedia(e: React.DragEvent): boolean {
+  const types = Array.from(e.dataTransfer.types || []);
+  return types.includes("Files") || types.includes(ASSET_DND);
+}
+
+export function DropArea({
+  onFiles,
+  onAssetDrop,
+  disabled,
+  className = "",
+  children,
+}: {
+  onFiles: (files: File[]) => void;
+  onAssetDrop?: (data: AssetDropData) => void;
+  disabled?: boolean;
+  className?: string;
+  children: React.ReactNode;
+}) {
+  const [over, setOver] = useState(false);
+  const depth = useRef(0);
+  const reset = () => {
+    depth.current = 0;
+    setOver(false);
+  };
+
+  return (
+    <div
+      onDragEnter={(e) => {
+        if (disabled || !carriesMedia(e)) return;
+        depth.current += 1;
+        setOver(true);
+      }}
+      onDragOver={(e) => {
+        if (disabled || !carriesMedia(e)) return;
+        e.preventDefault();
+      }}
+      onDragLeave={(e) => {
+        if (disabled || !carriesMedia(e)) return;
+        depth.current = Math.max(0, depth.current - 1);
+        if (!depth.current) setOver(false);
+      }}
+      onDropCapture={reset}
+      onDrop={(e) => {
+        if (disabled || !carriesMedia(e)) return;
+        e.preventDefault();
+        e.stopPropagation();
+        const { asset, files } = readDrop(e);
+        if (asset) onAssetDrop?.(asset);
+        else if (files.length) onFiles(files);
+      }}
+      className={`transition-shadow ${
+        over ? "ring-2 ring-accent/70" : ""
+      } ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function AddTile({
   accept,
   onFiles,
@@ -172,6 +231,7 @@ export function AddTile({
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         setDragging(false);
         if (disabled) return;
         const { asset, files } = readDrop(e);
@@ -240,6 +300,7 @@ export default function DropZone({
       onDragLeave={() => setDragging(false)}
       onDrop={(e) => {
         e.preventDefault();
+        e.stopPropagation();
         setDragging(false);
         if (disabled) return;
         const { asset, files } = readDrop(e);

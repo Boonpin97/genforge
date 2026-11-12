@@ -34,6 +34,9 @@ function isObj(v: unknown): v is Record<string, unknown> {
   return Boolean(v) && typeof v === "object" && !Array.isArray(v);
 }
 
+const RETIRED_TEXT_IDS = ["qwen3-vl-flash"];
+const NOW_VISION_IDS = ["qwen3.8-max", "qwen3.8-flash"];
+
 function mergeModel(def: ModelEntry | undefined, stored: ModelEntry): ModelEntry {
   const base = def ?? blankModel(stored.kind, stored.id, stored.label);
   return {
@@ -74,6 +77,18 @@ export function normalize(raw: unknown): GenforgeConfig {
           isObj(m.policy)
       ) as ModelEntry[])
     : [];
+  const legacy = typeof raw.version !== "number" || raw.version < 2;
+  const migrated = storedModels
+    .filter((m) => !RETIRED_TEXT_IDS.includes(m.id))
+    .map((m) =>
+      legacy &&
+      m.kind === "text" &&
+      NOW_VISION_IDS.includes(m.id) &&
+      (m.policy as { vision?: unknown }).vision === false
+        ? ({ ...m, policy: { ...m.policy, vision: true } } as ModelEntry)
+        : m
+    );
+  storedModels.splice(0, storedModels.length, ...migrated);
   const byId = new Map(storedModels.map((m) => [m.id, m]));
   const models: ModelEntry[] = DEFAULT_MODELS.map((def) => {
     const s = byId.get(def.id);
@@ -86,8 +101,10 @@ export function normalize(raw: unknown): GenforgeConfig {
   if (isObj(raw.roles))
     for (const k of Object.keys(roles) as (keyof Roles)[])
       if (typeof raw.roles[k] === "string") roles[k] = raw.roles[k] as string;
+  if (RETIRED_TEXT_IDS.includes(roles.appearance))
+    roles.appearance = DEFAULT_ROLES.appearance;
   return {
-    version: 1,
+    version: 2,
     providers,
     videoProvider: raw.videoProvider === "qwencloud" ? "qwencloud" : "dashscope",
     roles,

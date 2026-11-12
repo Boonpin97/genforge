@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "providers": {
     "dashscope": {
       "apiKey": "",
@@ -22,7 +22,7 @@
   "roles": {
     "director": "qwen3.8-max",
     "rewrite": "qwen3.8-flash",
-    "appearance": "qwen3-vl-flash"
+    "appearance": "qwen3.8-flash"
   },
   "models": [
     {
@@ -1659,7 +1659,7 @@
       "provider": "alibaba",
       "enabled": true,
       "policy": {
-        "vision": false,
+        "vision": true,
         "maxTokens": 8000
       },
       "pricing": {
@@ -1674,7 +1674,7 @@
       "provider": "alibaba",
       "enabled": true,
       "policy": {
-        "vision": false,
+        "vision": true,
         "maxTokens": 8000
       },
       "pricing": {
@@ -1683,11 +1683,11 @@
       }
     },
     {
-      "id": "qwen3-vl-flash",
-      "label": "Qwen 3 VL Flash",
+      "id": "qwen3-vl-plus",
+      "label": "Qwen 3 VL Plus",
       "kind": "text",
       "provider": "alibaba",
-      "enabled": true,
+      "enabled": false,
       "policy": {
         "vision": true,
         "maxTokens": 8000
