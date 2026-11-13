@@ -726,7 +726,7 @@ export default function DirectorPanel({
       <Panel title={amending ? "Amendment" : "Premise"} step="01">
         <MentionTextArea
           rows={4}
-          maxLength={4000}
+          maxLength={8000}
           value={premise}
           onChange={setPremise}
           projectId={projectId}
@@ -760,7 +760,7 @@ export default function DirectorPanel({
               "Director turns this into your storyboard script style"
             )}
           </span>
-          <span className="shrink-0">{premise.length}/4000</span>
+          <span className="shrink-0">{premise.length}/8000</span>
         </div>
       </Panel>
 

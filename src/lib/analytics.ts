@@ -42,8 +42,8 @@ export async function recordDirectorRun(input: {
     model: input.model,
     premise: input.premise.slice(0, 120),
     fullPremise:
-      input.premise.length > 120 ? input.premise.slice(0, 4000) : undefined,
-    instruction: input.instruction?.slice(0, 4000) || undefined,
+      input.premise.length > 120 ? input.premise.slice(0, 8000) : undefined,
+    instruction: input.instruction?.slice(0, 8000) || undefined,
     parentId: input.parentId || undefined,
     estimate: input.estimate,
     tokens: input.tokens ?? null,
