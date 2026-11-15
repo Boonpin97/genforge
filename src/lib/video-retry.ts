@@ -152,7 +152,7 @@ const IP_CODES = new Set(["IPInfringementSuspect", "ip_infringement_suspect"]);
 
 function seedCanHelp(code: string | undefined, message = ""): boolean {
   if (!code) return true;
-  if (IP_CODES.has(code)) return !/input data/i.test(message);
+  if (IP_CODES.has(code)) return /output data/i.test(message);
   if (FINAL_CODES.has(code)) return false;
   return !code.startsWith("InvalidParameter") && !code.startsWith("AccessDenied");
 }
