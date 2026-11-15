@@ -144,14 +144,15 @@ const FINAL_CODES = new Set([
   "Throttling.AllocationQuota",
   "unsupported_model",
   "UnknownTask",
-  "IPInfringementSuspect",
-  "ip_infringement_suspect",
   "AccessDenied",
   "BadRequest",
 ]);
 
-function seedCanHelp(code: string | undefined): boolean {
+const IP_CODES = new Set(["IPInfringementSuspect", "ip_infringement_suspect"]);
+
+function seedCanHelp(code: string | undefined, message = ""): boolean {
   if (!code) return true;
+  if (IP_CODES.has(code)) return !/input data/i.test(message);
   if (FINAL_CODES.has(code)) return false;
   return !code.startsWith("InvalidParameter") && !code.startsWith("AccessDenied");
 }
@@ -274,7 +275,7 @@ export async function reportFailure(
       ? ("stopped" as const)
       : s.max !== null && s.attempts.length >= s.max
         ? ("max" as const)
-        : !seedCanHelp(error.code)
+        : !seedCanHelp(error.code, error.message)
           ? ("final" as const)
           : null;
     if (reason || !s.request) {
