@@ -16,7 +16,6 @@ import {
 
 type SaveBody = {
   providers?: Partial<Record<ProviderId, { apiKey?: string | null; baseUrl?: string }>>;
-  videoProvider?: "dashscope" | "qwencloud";
   roles?: Partial<PublicConfig["roles"]>;
   models?: Record<string, unknown>[];
   add?: Record<string, unknown>;
@@ -31,8 +30,6 @@ const KIND_LABELS: Record<ModelKind, string> = {
 const PROVIDER_HINTS: Record<ProviderId, string> = {
   dashscope:
     "Runs Wan video, Qwen Image and the Qwen writing models. Keys are region-locked: Singapore keys use dashscope-intl.aliyuncs.com, Beijing keys use dashscope.aliyuncs.com.",
-  qwencloud:
-    "An alternative endpoint for Wan video only. It is the only one that supports first and last frame mode for Wan.",
   openrouter:
     "One key for every non-Qwen model: Veo, Kling, Seedance, Hailuo, Runway, Grok, Nano Banana, GPT Image, FLUX, Claude, GPT, Gemini and more.",
   tokenplan:
@@ -108,7 +105,6 @@ const VIDEO_FIELDS: FieldSpec[] = [
   { kind: "bool", path: ["policy", "refs", "videoCountsTowardDuration"], label: "Reference video takes time out of the output" },
   { kind: "num", path: ["policy", "refs", "totalBudgetSec"], label: "Reference plus output total", hint: "seconds" },
   { kind: "bool", path: ["policy", "refs", "framesExclusiveWithRefs"], label: "Frames cannot be mixed with reference media" },
-  { kind: "bool", path: ["policy", "framesRequireQwencloud"], label: "Frame mode needs the QwenCloud endpoint" },
   { kind: "bool", path: ["policy", "smartDuration"], label: "Model can choose the length" },
   { kind: "bool", path: ["policy", "audio"], label: "Generates audio" },
   { kind: "bool", path: ["policy", "seed"], label: "Accepts a seed" },
@@ -886,26 +882,6 @@ export default function ModelsPage() {
                   info={cfg.providers.dashscope}
                   busy={busy}
                   onSave={save}
-                />
-                <ProviderCard
-                  id="qwencloud"
-                  info={cfg.providers.qwencloud}
-                  busy={busy}
-                  onSave={save}
-                  extra={
-                    <div className="mt-3">
-                      <Field label="Wan video runs on">
-                        <Seg
-                          value={cfg.videoProvider}
-                          onChange={(v) => void save({ videoProvider: v })}
-                          options={[
-                            { value: "dashscope", label: "DashScope" },
-                            { value: "qwencloud", label: "QwenCloud" },
-                          ]}
-                        />
-                      </Field>
-                    </div>
-                  }
                 />
                 <ProviderCard
                   id="openrouter"

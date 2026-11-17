@@ -1,9 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import {
-  ApiErrorLike,
-  getVideoProvider,
-  uploadTempFile,
-} from "@/lib/dashscope";
+import { ApiErrorLike, uploadTempFile } from "@/lib/dashscope";
 
 export const maxDuration = 300;
 
@@ -60,11 +56,7 @@ export async function POST(req: NextRequest) {
         : /\.mov$/i.test(file.name)
           ? "video/quicktime"
           : "video/mp4");
-    const url = await uploadTempFile(
-      { bytes, filename: safeName, contentType },
-      model,
-      await getVideoProvider()
-    );
+    const url = await uploadTempFile({ bytes, filename: safeName, contentType }, model);
 
     return NextResponse.json({ url });
   } catch (err) {

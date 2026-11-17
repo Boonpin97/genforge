@@ -16,13 +16,7 @@ export async function isConfigured(): Promise<boolean> {
   return Boolean((await readConfig()).providers.dashscope.apiKey);
 }
 
-export type VideoProvider = "dashscope" | "qwencloud";
-
-export type DashService = VideoProvider | "tokenplan";
-
-export async function getVideoProvider(): Promise<VideoProvider> {
-  return (await readConfig()).videoProvider;
-}
+export type DashService = "dashscope" | "tokenplan";
 
 export type DashResponse = {
   status: number;
@@ -31,7 +25,6 @@ export type DashResponse = {
 
 const SERVICE_LABELS: Record<DashService, string> = {
   dashscope: "DashScope",
-  qwencloud: "QwenCloud",
   tokenplan: "the Token Plan endpoint",
 };
 
@@ -91,17 +84,6 @@ export async function dashscope(
   return serviceFetch("dashscope", path, init);
 }
 
-export async function qwencloud(
-  path: string,
-  init: {
-    method?: string;
-    json?: unknown;
-    headers?: Record<string, string>;
-  } = {}
-): Promise<DashResponse> {
-  return serviceFetch("qwencloud", path, init);
-}
-
 export async function tokenplan(
   path: string,
   init: {
@@ -114,7 +96,7 @@ export async function tokenplan(
 }
 
 export async function videoService(
-  provider: DashService,
+  provider: DashService | "qwencloud",
   path: string,
   init: {
     method?: string;
@@ -122,7 +104,7 @@ export async function videoService(
     headers?: Record<string, string>;
   } = {}
 ): Promise<DashResponse> {
-  return serviceFetch(provider, path, init);
+  return serviceFetch(provider === "tokenplan" ? "tokenplan" : "dashscope", path, init);
 }
 
 export function extractError(body: Record<string, unknown>): ApiError {
@@ -203,7 +185,7 @@ export function hasOssMedia(media: { url: string }[]): boolean {
 export async function uploadTempFile(
   file: { bytes: Buffer; filename: string; contentType: string },
   model: string,
-  svc: VideoProvider = "dashscope"
+  svc: DashService = "dashscope"
 ): Promise<string> {
   const policyRes = await serviceFetch(
     svc,

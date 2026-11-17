@@ -2,7 +2,7 @@ export type ModelKind = "video" | "image" | "text";
 
 export type ModelProvider = "alibaba" | "openrouter" | "tokenplan";
 
-export type ProviderId = "dashscope" | "qwencloud" | "openrouter" | "tokenplan";
+export type ProviderId = "dashscope" | "openrouter" | "tokenplan";
 
 export type FrameType = "first_frame" | "last_frame";
 
@@ -37,7 +37,6 @@ export type VideoPolicy = {
   ratios: string[];
   audio: boolean;
   frames: FrameType[];
-  framesRequireQwencloud: boolean;
   refs: VideoRefPolicy;
   watermark: boolean;
   seed: boolean;
@@ -100,7 +99,6 @@ export type ProviderConfig = { apiKey: string; baseUrl: string };
 export type GenforgeConfig = {
   version: 2;
   providers: Record<ProviderId, ProviderConfig>;
-  videoProvider: "dashscope" | "qwencloud";
   roles: Roles;
   models: ModelEntry[];
 };
@@ -118,32 +116,26 @@ export type PublicModel = ModelEntry & {
 
 export type PublicConfig = {
   providers: Record<ProviderId, PublicProvider>;
-  videoProvider: "dashscope" | "qwencloud";
   roles: Roles;
   models: PublicModel[];
 };
 
 export const PROVIDER_LABELS: Record<ProviderId, string> = {
   dashscope: "Alibaba DashScope",
-  qwencloud: "Alibaba QwenCloud",
   openrouter: "OpenRouter",
   tokenplan: "Alibaba Token Plan",
 };
 
 export const DEFAULT_BASE_URLS: Record<ProviderId, string> = {
   dashscope: "https://dashscope-intl.aliyuncs.com",
-  qwencloud: "https://dashscope-intl.aliyuncs.com",
   openrouter: "https://openrouter.ai/api/v1",
   tokenplan: "https://token-plan.ap-southeast-1.maas.aliyuncs.com",
 };
 
-export function resolveProvider(
-  m: Pick<ModelEntry, "provider" | "kind">,
-  videoProvider: "dashscope" | "qwencloud"
-): ProviderId {
+export function resolveProvider(m: Pick<ModelEntry, "provider">): ProviderId {
   if (m.provider === "openrouter") return "openrouter";
   if (m.provider === "tokenplan") return "tokenplan";
-  return m.kind === "video" ? videoProvider : "dashscope";
+  return "dashscope";
 }
 
 export function upstreamModelId(m: Pick<ModelEntry, "id" | "upstreamId">): string {
@@ -282,7 +274,6 @@ function orVideo(
   policy: Omit<
     VideoPolicy,
     | "smartDuration"
-    | "framesRequireQwencloud"
     | "watermark"
     | "refs"
     | "longestDurationOnly"
@@ -310,7 +301,6 @@ function orVideo(
       firstFrameRequired: false,
       maxPromptChars: maxPromptChars ?? 0,
       smartDuration: false,
-      framesRequireQwencloud: false,
       watermark: false,
       refs: orRefs(maxImages, limits),
     },
@@ -337,7 +327,6 @@ function wan(id: string, label: string, pricing: ModelPricing): VideoModel {
       ratios: WAN_RATIOS,
       audio: true,
       frames: ["first_frame", "last_frame"],
-      framesRequireQwencloud: true,
       refs: {
         minImages: 0,
         maxImages: 10,
@@ -361,7 +350,7 @@ function wan(id: string, label: string, pricing: ModelPricing): VideoModel {
     },
     pricing,
     notes:
-      "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint, and frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters.",
+      "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. Frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters.",
   };
 }
 
@@ -416,7 +405,6 @@ function happyHorse(
       smartDuration: false,
       resolutions: ["480P", "720P", "1080P"],
       audio: false,
-      framesRequireQwencloud: false,
       watermark: true,
       seed: true,
       ...policy,
@@ -902,11 +890,9 @@ export function defaultConfig(): GenforgeConfig {
     version: 2,
     providers: {
       dashscope: { apiKey: "", baseUrl: DEFAULT_BASE_URLS.dashscope },
-      qwencloud: { apiKey: "", baseUrl: DEFAULT_BASE_URLS.qwencloud },
       openrouter: { apiKey: "", baseUrl: DEFAULT_BASE_URLS.openrouter },
       tokenplan: { apiKey: "", baseUrl: DEFAULT_BASE_URLS.tokenplan },
     },
-    videoProvider: "dashscope",
     roles: { ...DEFAULT_ROLES },
     models: DEFAULT_MODELS.map((m) => structuredClone(m)),
   };
@@ -938,7 +924,6 @@ export function blankModel(kind: ModelKind, id: string, label?: string): ModelEn
         ratios: ["16:9", "9:16", "1:1"],
         audio: false,
         frames: ["first_frame"],
-        framesRequireQwencloud: false,
         refs: orRefs(0),
         watermark: false,
         seed: false,

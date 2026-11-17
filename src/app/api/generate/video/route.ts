@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getVideoProvider, hasOssMedia, type DashService } from "@/lib/dashscope";
+import { hasOssMedia, type DashService } from "@/lib/dashscope";
 import { ApiErrorLike, errorStatus } from "@/lib/errors";
 import { requireModel } from "@/lib/config";
 import { checkVideo } from "@/lib/policy-check";
@@ -75,7 +75,7 @@ export async function POST(req: NextRequest) {
       throw new ApiErrorLike("BadRequest", `${entry.label} is an OpenRouter model.`);
     const model = upstreamModelId(entry);
     const provider: DashService =
-      entry.provider === "tokenplan" ? "tokenplan" : await getVideoProvider();
+      entry.provider === "tokenplan" ? "tokenplan" : "dashscope";
     const policy = entry.policy;
     checkVideo(entry, {
       prompt,

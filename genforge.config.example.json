@@ -5,10 +5,6 @@
       "apiKey": "",
       "baseUrl": "https://dashscope-intl.aliyuncs.com"
     },
-    "qwencloud": {
-      "apiKey": "",
-      "baseUrl": "https://dashscope-intl.aliyuncs.com"
-    },
     "openrouter": {
       "apiKey": "",
       "baseUrl": "https://openrouter.ai/api/v1"
@@ -18,7 +14,6 @@
       "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com"
     }
   },
-  "videoProvider": "dashscope",
   "roles": {
     "director": "qwen3.8-max",
     "rewrite": "qwen3.8-flash",
@@ -59,7 +54,6 @@
           "first_frame",
           "last_frame"
         ],
-        "framesRequireQwencloud": true,
         "refs": {
           "minImages": 0,
           "maxImages": 10,
@@ -88,7 +82,7 @@
           "1080P": 0.2
         }
       },
-      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint, and frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters."
+      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. Frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters."
     },
     {
       "id": "wan3.0-video-prime",
@@ -124,7 +118,6 @@
           "first_frame",
           "last_frame"
         ],
-        "framesRequireQwencloud": true,
         "refs": {
           "minImages": 0,
           "maxImages": 10,
@@ -153,7 +146,7 @@
           "1080P": 0.28
         }
       },
-      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. First and last frame mode needs the QwenCloud endpoint, and frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters."
+      "notes": "Reference video length is taken out of the 30s total, so a 10s reference leaves 20s of output. Frames cannot be mixed with reference media. Images (references and frames) must be 240–8000px per side and no wider than 8:1 — smaller ones are upscaled and larger ones downscaled at submit. Reference video and audio clips must each be at least 1s (videos also at least 16fps and 240–4096px per side). Prompts up to 20,000 characters."
     },
     {
       "id": "happyhorse-1.1-t2v",
@@ -176,7 +169,6 @@
           "1080P"
         ],
         "audio": false,
-        "framesRequireQwencloud": false,
         "watermark": true,
         "seed": true,
         "ratios": [
@@ -240,7 +232,6 @@
           "1080P"
         ],
         "audio": false,
-        "framesRequireQwencloud": false,
         "watermark": true,
         "seed": true,
         "ratios": [
@@ -298,7 +289,6 @@
           "1080P"
         ],
         "audio": false,
-        "framesRequireQwencloud": false,
         "watermark": true,
         "seed": true,
         "ratios": [
@@ -374,7 +364,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -436,7 +425,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -501,7 +489,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -566,7 +553,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -624,7 +610,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 2500,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -684,7 +669,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 2500,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -753,7 +737,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -824,7 +807,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -892,7 +874,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -957,7 +938,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 2000,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -1018,7 +998,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 2000,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -1074,7 +1053,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 1000,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -1136,7 +1114,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,
@@ -1197,7 +1174,6 @@
         "firstFrameRequired": false,
         "maxPromptChars": 0,
         "smartDuration": false,
-        "framesRequireQwencloud": false,
         "watermark": false,
         "refs": {
           "minImages": 0,

@@ -379,9 +379,7 @@ export default function VideoPanel({
   const TOTAL_BUDGET_SEC = refPolicy.totalBudgetSec;
   const hasLastFrame = policy.frames.includes("last_frame");
 
-  const showFrameMode =
-    policy.frames.length > 0 &&
-    (!policy.framesRequireQwencloud || entry?.resolvedProvider === "qwencloud");
+  const showFrameMode = policy.frames.length > 0;
   const frameMode = showFrameMode && genMode === "frame";
   const takesRefs = MAX_IMAGES + MAX_VIDEOS + MAX_AUDIO > 0;
   const smartCapable = policy.smartDuration && !frameMode;

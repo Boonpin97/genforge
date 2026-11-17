@@ -21,7 +21,7 @@ import { sanitizePolicy, sanitizePricing } from "@/lib/model-sanitize";
 
 export const dynamic = "force-dynamic";
 
-const PROVIDERS: ProviderId[] = ["dashscope", "qwencloud", "openrouter", "tokenplan"];
+const PROVIDERS: ProviderId[] = ["dashscope", "openrouter", "tokenplan"];
 const ID_RE = /^[A-Za-z0-9._-]+(\/[A-Za-z0-9._:-]+)?$/;
 
 type ModelPatch = {
@@ -37,7 +37,6 @@ type ModelPatch = {
 
 type Body = {
   providers?: Partial<Record<ProviderId, { apiKey?: unknown; baseUrl?: unknown }>>;
-  videoProvider?: unknown;
   roles?: Partial<Record<keyof Roles, unknown>>;
   models?: ModelPatch[];
   add?: { id?: unknown; kind?: unknown; label?: unknown; policy?: unknown; pricing?: unknown; notes?: unknown };
@@ -110,8 +109,6 @@ export async function PUT(req: NextRequest) {
           }
         }
       }
-      if (body.videoProvider === "dashscope" || body.videoProvider === "qwencloud")
-        c.videoProvider = body.videoProvider;
       if (body.roles)
         for (const k of ["director", "rewrite", "appearance"] as const) {
           const v = body.roles[k];

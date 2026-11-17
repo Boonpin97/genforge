@@ -172,9 +172,6 @@ export default function Studio({
   const [tasks, setTasks] = useState<TaskRecord[]>([]);
   const [assets, setAssets] = useState<TaskRecord[]>([]);
   const [configured, setConfigured] = useState<boolean | null>(null);
-  const [videoProvider, setVideoProvider] = useState<"dashscope" | "qwencloud">(
-    "dashscope"
-  );
   const [models, setModels] = useState<PublicModel[]>([]);
   const [roles, setRoles] = useState<Roles | null>(null);
   const [banner, setBanner] = useState<string | null>(null);
@@ -419,7 +416,6 @@ export default function Studio({
         .then((d) => {
           if (!alive) return;
           setConfigured(Boolean(d.configured));
-          setVideoProvider(d.videoProvider === "qwencloud" ? "qwencloud" : "dashscope");
           setModels(Array.isArray(d.models) ? d.models : []);
           if (d.roles) setRoles(d.roles);
         })
@@ -645,7 +641,7 @@ export default function Studio({
           : resolved === "tokenplan"
             ? "tokenplan"
             : models.length
-              ? videoProvider
+              ? "dashscope"
               : null);
       if (!provider) return;
       const transient = (err: TaskRecord["error"]) => {
@@ -796,7 +792,7 @@ export default function Studio({
         });
       }
     },
-    [models, persistAsset, updateTask, videoProvider]
+    [models, persistAsset, updateTask]
   );
 
   useEffect(() => {

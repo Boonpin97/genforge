@@ -11,7 +11,6 @@ export async function GET() {
     return NextResponse.json({
       configured: models.length > 0,
       openrouterConfigured: pub.providers.openrouter.hasKey,
-      videoProvider: pub.videoProvider,
       roles: pub.roles,
       models,
     });

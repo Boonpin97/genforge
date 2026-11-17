@@ -21,7 +21,7 @@ import { sanitizePolicy, sanitizePricing } from "./model-sanitize";
 
 export const CONFIG_FILE = "genforge.config.json";
 
-const PROVIDERS: ProviderId[] = ["dashscope", "qwencloud", "openrouter", "tokenplan"];
+const PROVIDERS: ProviderId[] = ["dashscope", "openrouter", "tokenplan"];
 
 function configPath(): string {
   return path.join(process.cwd(), CONFIG_FILE);
@@ -36,6 +36,8 @@ function isObj(v: unknown): v is Record<string, unknown> {
 
 const RETIRED_TEXT_IDS = ["qwen3-vl-flash"];
 const NOW_VISION_IDS = ["qwen3.8-max", "qwen3.8-flash"];
+const RETIRED_QWENCLOUD_NOTE =
+  "First and last frame mode needs the QwenCloud endpoint, and frames cannot";
 
 function mergeModel(def: ModelEntry | undefined, stored: ModelEntry): ModelEntry {
   const base = def ?? blankModel(stored.kind, stored.id, stored.label);
@@ -43,7 +45,10 @@ function mergeModel(def: ModelEntry | undefined, stored: ModelEntry): ModelEntry
     ...base,
     label: typeof stored.label === "string" && stored.label ? stored.label : base.label,
     enabled: Boolean(stored.enabled),
-    notes: typeof stored.notes === "string" ? stored.notes : base.notes,
+    notes:
+      typeof stored.notes === "string"
+        ? stored.notes.replace(RETIRED_QWENCLOUD_NOTE, "Frames cannot")
+        : base.notes,
     deprecated: base.deprecated,
     custom: def ? undefined : true,
     policy: sanitizePolicy(base, stored.policy),
@@ -67,6 +72,20 @@ export function normalize(raw: unknown): GenforgeConfig {
               : DEFAULT_BASE_URLS[p],
         };
     }
+    const legacyQwen = raw.providers.qwencloud;
+    if (
+      !providers.dashscope.apiKey &&
+      isObj(legacyQwen) &&
+      typeof legacyQwen.apiKey === "string" &&
+      legacyQwen.apiKey.trim()
+    )
+      providers.dashscope = {
+        apiKey: legacyQwen.apiKey.trim(),
+        baseUrl:
+          typeof legacyQwen.baseUrl === "string" && legacyQwen.baseUrl.trim()
+            ? legacyQwen.baseUrl.trim().replace(/\/+$/, "")
+            : DEFAULT_BASE_URLS.dashscope,
+      };
   }
   const storedModels = Array.isArray(raw.models)
     ? (raw.models.filter(
@@ -106,7 +125,6 @@ export function normalize(raw: unknown): GenforgeConfig {
   return {
     version: 2,
     providers,
-    videoProvider: raw.videoProvider === "qwencloud" ? "qwencloud" : "dashscope",
     roles,
     models,
   };
@@ -172,7 +190,7 @@ export function hasKey(c: GenforgeConfig, p: ProviderId): boolean {
 }
 
 export function modelProvider(c: GenforgeConfig, m: ModelEntry): ProviderId {
-  return resolveProvider(m, c.videoProvider);
+  return resolveProvider(m);
 }
 
 export function isAvailable(c: GenforgeConfig, m: ModelEntry): boolean {
@@ -257,7 +275,6 @@ export function toPublic(c: GenforgeConfig): PublicConfig {
   }));
   return {
     providers,
-    videoProvider: c.videoProvider,
     roles: c.roles,
     models,
   };

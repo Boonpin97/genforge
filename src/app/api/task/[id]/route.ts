@@ -4,7 +4,6 @@ import {
   dashscope,
   extractError,
   friendlyError,
-  qwencloud,
   tokenplan,
 } from "@/lib/dashscope";
 import { openrouter } from "@/lib/openrouter";
@@ -152,8 +151,7 @@ export async function GET(
     }
   }
 
-  const svc =
-    provider === "qwencloud" ? qwencloud : provider === "tokenplan" ? tokenplan : dashscope;
+  const svc = provider === "tokenplan" ? tokenplan : dashscope;
   try {
     const res = await svc(`/api/v1/tasks/${encodeURIComponent(id)}`);
     const out = res.body as {
